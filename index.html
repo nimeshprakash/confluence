@@ -215,7 +215,7 @@
       <div class="tp-stat"><div class="lbl">Probable exit target</div><div class="val" id="tpTP">—</div></div>
     </div>
     <div class="tp-note" id="tpRationale" style="margin-bottom:4px;"></div>
-    <div class="tp-note" id="tpNote">Picks the highest-timeframe setup currently aligned with the majority direction. Entry and exit pricing are always derived from M15 (entry: FVGs, market price) and H1 (structure: BOS/CHoCH swing breaks and liquidity-pool clusters), regardless of which timeframe the setup's own signal fires on.</div>
+    <div class="tp-note" id="tpNote">Picks the highest-timeframe setup currently aligned with the majority direction and derives entry/exit pricing from that setup's own timeframe, verified against market structure: BOS/CHoCH swing breaks, unmitigated Fair Value Gaps, and liquidity-pool clusters (equal highs/lows).</div>
   </div>
 
   <div class="section-title">Setup 1 — Trend Pullback (5-timeframe confluence)</div>
@@ -252,7 +252,7 @@
     <br><br>
     <b>What's automatic vs. what isn't:</b> items tagged <span class="badge auto">AUTO</span> are computed every refresh cycle straight from live OHLC data (EMA stack order, RSI(21), CCI(81), EMA pullback proximity, candle patterns, market-structure and overhead-resistance/support heuristics). Market structure and resistance/support are estimated from recent swing pivots — verify visually if a call looks borderline. <b>Enter</b> and <b>Target</b> stay as manual checkboxes with a computed price suggestion next to them, since those are execution decisions, not yes/no conditions. This tool gives you information to make your own trading decision — it isn't financial advice.
     <br><br>
-    <b>Entry &amp; exit pricing on each card:</b> for any of the 20 setups currently signaling BUY or SELL, entry and a probable exit target are derived from market structure — always read off <b>M15 and H1</b>, regardless of which timeframe the setup's own signal fires on. <b>Entry</b> uses the nearest unmitigated Fair Value Gap (FVG) on M15 in the trade's direction if one sits within 2% of price, otherwise the current M15 market price. The <b>exit target</b> is the next opposing H1 liquidity pool (cluster of equal highs/lows) or H1 swing extreme that price is likely to reach in the trade's favor; if no such level clears a reasonable distance from entry, it falls back to a projected move sized off the most recent H1 structural swing. Each card also shows the prevailing H1 structure trend and the most recent BOS (Break of Structure, trend continuation) or CHoCH (Change of Character, first break against the trend). This is a heuristic read of where price may probably reach, not a recommendation — always confirm structure visually before acting on it.
+    <b>Entry &amp; exit pricing on each card:</b> for any of the 20 setups currently signaling BUY or SELL, entry and a probable exit target are derived from that setup's own timeframe (shown under its name) and verified against market structure on that same timeframe. <b>Entry</b> uses the nearest unmitigated Fair Value Gap (FVG) in the trade's direction if one sits within 2% of price, otherwise the current market price. The <b>exit target</b> is the next opposing liquidity pool (cluster of equal highs/lows) or swing extreme that price is likely to reach in the trade's favor; if no such level clears a reasonable distance from entry, it falls back to a projected move sized off the most recent structural swing. Each card also shows the prevailing structure trend and the most recent BOS (Break of Structure, trend continuation) or CHoCH (Change of Character, first break against the trend) on that setup's timeframe. This is a heuristic read of where price may probably reach, not a recommendation — always confirm structure visually before acting on it.
   </div>
 
   <div class="section-title">Chart for confirmation &amp; identification</div>
@@ -472,20 +472,21 @@ function detectLiquidityPools(series, tolPct){
 }
 
 // Entry & probable exit target derived from market structure, fixed to two timeframes:
-// M15 supplies the entry (finer-grained FVG retracement, or current market price if none
-// nearby) while H1 supplies the structure — swing pivots, liquidity pools, and trend/BOS/CHoCH
-// read — since higher-timeframe levels make more meaningful exit targets. A structural
-// invalidation level (beyond the protecting H1 swing/liquidity pool) is computed internally
-// purely to size a sensible exit projection when no clean opposing level exists — it is not
-// shown to the user. Exit target is the next opposing H1 liquidity pool or swing extreme in
-// profit, falling back to a projected move sized off that internal swing distance otherwise.
-function structureTradeLevels(direction, m15series, h1series){
-  const n = m15series.closes.length, last = n-1;
-  const price = m15series.closes[last];
+// Entry & probable exit target derived from each setup's own primary timeframe, verified
+// against market structure: entry at an unmitigated Fair Value Gap retracement (or current
+// market price if none nearby), cross-checked against BOS/CHoCH swing breaks and liquidity-pool
+// clusters (equal highs/lows) on that same timeframe. A structural invalidation level (beyond
+// the protecting swing/liquidity pool) is computed internally purely to size a sensible exit
+// projection when no clean opposing level exists — it is not shown to the user. Exit target is
+// the next opposing liquidity pool or swing extreme in profit, falling back to a projected move
+// sized off that internal swing distance otherwise.
+function structureTradeLevels(direction, series){
+  const n = series.closes.length, last = n-1;
+  const price = series.closes[last];
   const buy = direction==='buy';
-  const struct = structureEvents(h1series);
-  const fvgs = detectFVGs(m15series);
-  const pools = detectLiquidityPools(h1series);
+  const struct = structureEvents(series);
+  const fvgs = detectFVGs(series);
+  const pools = detectLiquidityPools(series);
   const pivots = struct.pivots;
 
   let entry = price, entryType = 'Market (no fresh FVG nearby)', entryNote = '';
@@ -1169,9 +1170,11 @@ function evaluateAllSetups(){
   setupResults.londonBreakout        = m15 ? detectLondonBreakout(m15)              : {direction:'none', note:'Waiting for M15 data'};
 
   SETUPS_META.forEach(meta=>{
+    const tf = SETUP_PRIMARY_TF[meta.id];
+    const cached = seriesCache[tf];
     const r = setupResults[meta.id];
-    if(r && (r.direction==='buy' || r.direction==='sell') && m15 && h1){
-      r.levels = structureTradeLevels(r.direction, m15.series, h1.series);
+    if(r && cached && (r.direction==='buy' || r.direction==='sell')){
+      r.levels = structureTradeLevels(r.direction, cached.series);
     } else if(r){
       r.levels = null;
     }
@@ -1293,7 +1296,7 @@ function updateTradePlan(masterCls, buyCount, sellCount){
   entryEl.textContent = fmt(lv.entry);
   tpEl.textContent = fmt(lv.tp);
   rationaleEl.textContent = `Using ${chosen.name} (${tf}) · Entry: ${lv.entryType}${lv.entryNote ? ' '+lv.entryNote : ''} · Target: ${lv.tpType} · Structure: ${trendTxt}${evTxt}`;
-  noteEl.textContent = `Picks the highest-timeframe setup currently aligned with the majority direction (${eligibleMeta.length} eligible). Entry and exit pricing are always read off M15 (entry) and H1 (structure/target), regardless of the setup's own signal timeframe.`;
+  noteEl.textContent = `Picks the highest-timeframe setup currently aligned with the majority direction (${eligibleMeta.length} eligible) and derives entry/exit pricing from that setup's own timeframe (${tf}), verified against its market structure.`;
 }
 
 function setStatus(msg, isErr){
