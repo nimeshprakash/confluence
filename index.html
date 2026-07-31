@@ -60,6 +60,10 @@
   .setup-dir.none{color:var(--muted); background:var(--panel-2);}
   .setup-dir.watch{color:var(--gold); background:var(--panel-2);}
   .setup-card .snote{display:block; font-size:11px; color:var(--muted); font-family:var(--mono); margin-top:3px; line-height:1.5;}
+  .trade-math{display:flex; flex-direction:column; gap:3px; margin:8px 0; padding:8px 10px; background:var(--panel-2); border:1px solid var(--line); border-radius:6px; font-family:var(--mono); font-size:11px; color:var(--text);}
+  .trade-math .row{display:flex; justify-content:space-between; gap:8px;}
+  .trade-math .row b{color:var(--gold); font-weight:600;}
+  .trade-math .dim{color:var(--muted); font-style:italic;}
   #enableNotif{background:var(--panel-2); color:var(--text); border:1px solid var(--line); padding:8px 14px; border-radius:8px; cursor:pointer; font-size:12px; font-family:var(--sans);}
   #enableNotif:hover{border-color:var(--gold);}
 
@@ -170,12 +174,16 @@
         <label>Refresh every (minutes)</label>
         <input type="number" id="refreshInput" value="3" min="1" max="60" style="min-width:80px;">
       </div>
+      <div class="field">
+        <label>Account balance (USD)</label>
+        <input type="number" id="balanceInput" placeholder="e.g. 5000" min="0" step="0.01" style="min-width:140px;">
+      </div>
       <button class="btn primary" id="saveSettings">Save &amp; start auto-checking</button>
       <button class="btn" id="fetchNow">Refresh now</button>
       <button class="btn" id="stopAuto">Stop auto mode</button>
     </div>
     <div class="status-line" id="statusLine">No API key saved yet — running in manual checklist mode.</div>
-    <div class="settings-note">Get a free key at twelvedata.com (no card required). The key is sent directly from your browser to Twelve Data to fetch price data — it never passes through Anthropic or Claude, and is only saved in this portal's own storage for your convenience.</div>
+    <div class="settings-note">Get a free key at twelvedata.com (no card required). The key is sent directly from your browser to Twelve Data to fetch price data — it never passes through Anthropic or Claude, and is only saved in this portal's own storage for your convenience. Account balance is used only to size the risk/profit numbers shown on each setup card — it's stored locally in this portal's own storage and never sent anywhere.</div>
   </div>
 
   <div id="masterBanner" class="neutral">
@@ -218,6 +226,8 @@
     <b>M5</b> is the optional entry trigger &amp; risk box — completing it upgrades the banner to "READY TO ENTER."
     <br><br>
     <b>What's automatic vs. what isn't:</b> items tagged <span class="badge auto">AUTO</span> are computed every refresh cycle straight from live OHLC data (EMA stack order, RSI(21), CCI(81), EMA pullback proximity, candle patterns, market-structure and overhead-resistance/support heuristics). Market structure and resistance/support are estimated from recent swing pivots — verify visually if a call looks borderline. <b>Enter</b>, <b>Stop</b>, and <b>Target</b> stay as manual checkboxes with a computed price suggestion next to them, since those are execution decisions, not yes/no conditions. This tool gives you information to make your own trading decision — it isn't financial advice.
+    <br><br>
+    <b>Buy/sell price, stop &amp; take-profit on each card:</b> for any setup currently signaling BUY or SELL, the card shows the entry price (last close on that setup's timeframe), a stop loss set 1% away from entry, and a take-profit at a 1:2 risk:reward. If you enter your <b>account balance</b> above, each card also shows the dollar risk (1% of balance), the dollar profit at target, and a suggested position size in standard lots (1 lot = 100oz). This is a fixed formula for illustration, not a recommendation — always size positions to your own risk tolerance and broker's contract specs.
   </div>
 
   <div class="section-title">Chart for confirmation &amp; identification</div>
@@ -267,7 +277,7 @@ const AUTO_MAP = {
 
 let state = { buy:{}, sell:{} };
 let notes = { buy:{}, sell:{} }; // itemKey -> note string
-let config = { apiKey:'', symbol:'XAU/USD', refreshMinutes:3 };
+let config = { apiKey:'', symbol:'XAU/USD', refreshMinutes:3, accountBalance:0 };
 let autoMode = false;
 let prevBannerState = "neutral";
 let seriesCache = {}; // tf -> {opens,highs,lows,closes,times}
@@ -1019,7 +1029,36 @@ const SETUPS_META = [
   {id:'cciZeroLine',              name:'19. CCI Zero-Line Strategy',         tf:'H1'},
   {id:'londonBreakout',           name:'20. London Breakout Filter',         tf:'M15'}
 ];
-let setupResults = {}; // id -> {direction, note}
+let setupResults = {}; // id -> {direction, note, price}
+
+// Primary timeframe used as the "current price" reference for each setup's entry point
+const SETUP_PRIMARY_TF = {
+  trendPullback:'M15', emaAlignment:'H1', emaRejection:'M15', rangeBreakout:'H1',
+  breakoutRetest:'H1', emaBounce:'H1', rsiCciCombo:'M15', rsiDivergence:'H1',
+  cciExtreme:'M15', multiTfTrend:'M5', ema200Filter:'H4', fakeBreakout:'H1',
+  liquiditySweep:'M15', doubleTopBottom:'H1', emaScalp9:'M5',
+  emaRibbonBreakout:'M15', rsiCciExtremeReversal:'H1', rsiFailureSwing:'H1',
+  cciZeroLine:'H1', londonBreakout:'M15'
+};
+
+// Entry/SL/TP + $ risk-reward, using a 1% price-distance stop and a 1:2 risk:reward target,
+// with position size sized to risk 1% of the entered account balance.
+function tradeMath(direction, entry, balance){
+  if((direction!=='buy' && direction!=='sell') || entry==null || isNaN(entry)) return null;
+  const riskPct = 0.01;   // stop distance = 1% of entry price
+  const rr = 2;           // target = 1:2 risk:reward
+  const slDist = entry*riskPct;
+  const sl = direction==='buy' ? entry - slDist : entry + slDist;
+  const tpDist = slDist*rr;
+  const tp = direction==='buy' ? entry + tpDist : entry - tpDist;
+  let riskAmt=null, profitAmt=null, lots=null;
+  if(balance && balance>0){
+    riskAmt = balance*riskPct;      // risking 1% of account, matching the 1% stop
+    profitAmt = riskAmt*rr;
+    lots = riskAmt / (slDist*100);  // XAUUSD: 1 standard lot = 100 oz, so $ per lot per $1 move = 100
+  }
+  return {entry, sl, tp, slDist, tpDist, riskPct, rr, riskAmt, profitAmt, lots};
+}
 
 function evaluateAllSetups(){
   const d1 = seriesCache['D1'], h4 = seriesCache['H4'], h1 = seriesCache['H1'], m15 = seriesCache['M15'], m5 = seriesCache['M5'];
@@ -1043,6 +1082,14 @@ function evaluateAllSetups(){
   setupResults.rsiFailureSwing       = h1  ? detectRsiFailureSwing(h1)              : {direction:'none', note:'Waiting for H1 data'};
   setupResults.cciZeroLine           = h1  ? detectCciZeroLine(h1)                  : {direction:'none', note:'Waiting for H1 data'};
   setupResults.londonBreakout        = m15 ? detectLondonBreakout(m15)              : {direction:'none', note:'Waiting for M15 data'};
+
+  SETUPS_META.forEach(meta=>{
+    const tf = SETUP_PRIMARY_TF[meta.id];
+    const cached = seriesCache[tf];
+    if(cached && setupResults[meta.id]){
+      setupResults[meta.id].price = cached.series.closes[cached.series.closes.length-1];
+    }
+  });
 }
 
 function renderSetupCards(){
@@ -1053,8 +1100,25 @@ function renderSetupCards(){
     const card = document.createElement('div');
     card.className = 'setup-card ' + (r.direction==='buy' ? 'buy' : r.direction==='sell' ? 'sell' : r.direction==='watch' ? 'watch' : '');
     const dirLabel = r.direction==='buy' ? 'BUY' : r.direction==='sell' ? 'SELL' : r.direction==='watch' ? 'WATCHING' : 'NO SIGNAL';
+    let tradeHtml = '';
+    if(r.direction==='buy' || r.direction==='sell'){
+      const tm = tradeMath(r.direction, r.price, config.accountBalance);
+      if(tm){
+        tradeHtml = `<div class="trade-math">
+          <div class="row"><span>${r.direction==='buy'?'Buy':'Sell'} at</span><b>${fmt(tm.entry)}</b></div>
+          <div class="row"><span>Stop loss (-1%)</span><b>${fmt(tm.sl)}</b></div>
+          <div class="row"><span>Take profit (1:2)</span><b>${fmt(tm.tp)}</b></div>
+          ${tm.riskAmt!=null
+            ? `<div class="row"><span>Risk (1% of balance)</span><b>$${fmt(tm.riskAmt,2)}</b></div>
+               <div class="row"><span>Profit at TP</span><b>$${fmt(tm.profitAmt,2)}</b></div>
+               <div class="row"><span>Suggested size</span><b>${fmt(tm.lots,2)} lots</b></div>`
+            : `<div class="row dim"><span>Enter your account balance above to see $ risk/profit and position size</span></div>`}
+        </div>`;
+      }
+    }
     card.innerHTML = `<h4>${meta.name}</h4><div class="tf">Timeframe: ${meta.tf}</div>
       <span class="setup-dir ${r.direction==='none'?'none':r.direction}">${dirLabel}</span>
+      ${tradeHtml}
       <span class="snote">${r.note}</span>`;
     grid.appendChild(card);
   });
@@ -1314,15 +1378,24 @@ document.getElementById('saveSettings').addEventListener('click', async ()=>{
   config.apiKey = document.getElementById('apiKeyInput').value.trim();
   config.symbol = document.getElementById('symbolInput').value.trim() || 'XAU/USD';
   config.refreshMinutes = Math.max(1, parseInt(document.getElementById('refreshInput').value)||3);
+  const balVal = parseFloat(document.getElementById('balanceInput').value);
+  config.accountBalance = isNaN(balVal) ? 0 : Math.max(0, balVal);
   await saveConfig();
   autoMode = !!config.apiKey;
   applyAutoModeUI();
   applyStateToDOM();
+  renderSetupCards();
   if(refreshTimer) clearInterval(refreshTimer);
   if(autoMode){
     runAutoCycle();
     refreshTimer = setInterval(runAutoCycle, config.refreshMinutes*60*1000);
   }
+});
+document.getElementById('balanceInput').addEventListener('input', ()=>{
+  const v = parseFloat(document.getElementById('balanceInput').value);
+  config.accountBalance = isNaN(v) ? 0 : Math.max(0, v);
+  saveConfig();
+  renderSetupCards();
 });
 document.getElementById('fetchNow').addEventListener('click', ()=>{ if(config.apiKey) runAutoCycle(); else setStatus('Add an API key first.', true); });
 document.getElementById('stopAuto').addEventListener('click', ()=>{
@@ -1345,6 +1418,7 @@ function tickClock(){ document.getElementById('clock').textContent = new Date().
   document.getElementById('apiKeyInput').value = config.apiKey || '';
   document.getElementById('symbolInput').value = config.symbol || 'XAU/USD';
   document.getElementById('refreshInput').value = config.refreshMinutes || 3;
+  document.getElementById('balanceInput').value = config.accountBalance || '';
   autoMode = !!config.apiKey;
   applyAutoModeUI();
   applyStateToDOM();
