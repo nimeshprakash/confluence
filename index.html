@@ -47,7 +47,7 @@
   #masterBanner.sell .state{color:var(--sell);}
   #masterBanner.mixed .state{color:var(--gold);}
 
-  .setup-grid{display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:8px;}
+  .setup-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:14px; margin-bottom:8px;}
   .setup-card{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 16px;}
   .setup-card.buy{border-left:3px solid var(--buy);}
   .setup-card.sell{border-left:3px solid var(--sell);}
@@ -207,16 +207,6 @@
     </div>
   </div>
 
-  <div class="section-title">Chart for confirmation &amp; identification</div>
-  <div class="chart-card">
-    <h3>
-      <span>XAUUSD — <span id="chartTfLabel">Daily</span></span>
-      <div class="tf-toggle" id="tfToggle"></div>
-      <a id="tvOpenLink" href="https://www.tradingview.com/chart/?symbol=OANDA%3AXAUUSD&interval=D" target="_blank" rel="noopener">Open in TradingView ↗</a>
-    </h3>
-    <div class="tv" id="tv-main"><div class="chart-fallback">Loading chart…</div></div>
-  </div>
-
   <div class="section-title">All setups — live status</div>
   <div class="setup-grid" id="setupGrid"></div>
 
@@ -228,6 +218,16 @@
     <b>M5</b> is the optional entry trigger &amp; risk box — completing it upgrades the banner to "READY TO ENTER."
     <br><br>
     <b>What's automatic vs. what isn't:</b> items tagged <span class="badge auto">AUTO</span> are computed every refresh cycle straight from live OHLC data (EMA stack order, RSI(21), CCI(81), EMA pullback proximity, candle patterns, market-structure and overhead-resistance/support heuristics). Market structure and resistance/support are estimated from recent swing pivots — verify visually if a call looks borderline. <b>Enter</b>, <b>Stop</b>, and <b>Target</b> stay as manual checkboxes with a computed price suggestion next to them, since those are execution decisions, not yes/no conditions. This tool gives you information to make your own trading decision — it isn't financial advice.
+  </div>
+
+  <div class="section-title">Chart for confirmation &amp; identification</div>
+  <div class="chart-card">
+    <h3>
+      <span>XAUUSD — <span id="chartTfLabel">Daily</span></span>
+      <div class="tf-toggle" id="tfToggle"></div>
+      <a id="tvOpenLink" href="https://www.tradingview.com/chart/?symbol=OANDA%3AXAUUSD&interval=D" target="_blank" rel="noopener">Open in TradingView ↗</a>
+    </h3>
+    <div class="tv" id="tv-main"><div class="chart-fallback">Loading chart…</div></div>
   </div>
 
   <footer>Not financial advice. XAUUSD spot gold vs USD. Data via Twelve Data when auto mode is on.</footer>
@@ -486,6 +486,236 @@ function detectSqueeze(series){
   return {direction:'none', note:`Bandwidth normal, no squeeze detected`};
 }
 
+/* ---------- 15 named setup detectors ---------- */
+
+// 1. Trend Pullback (Best for Gold): H1 trend filter + M15 pullback trigger
+function detectTrendPullback(h1, m15){
+  if(!h1 || !m15) return {direction:'none', note:'Waiting for H1 and M15 data'};
+  const hi=h1.ind, hs=h1.series, hL=hs.closes.length-1;
+  const mi=m15.ind, ms=m15.series, mL=ms.closes.length-1;
+  const bullH1 = hi.ema50[hL]>hi.ema100[hL] && hi.ema100[hL]>hi.ema200[hL] && hs.closes[hL]>hi.ema50[hL] && hi.rsi21[hL]>50;
+  const bearH1 = hi.ema50[hL]<hi.ema100[hL] && hi.ema100[hL]<hi.ema200[hL] && hs.closes[hL]<hi.ema50[hL] && hi.rsi21[hL]<50;
+  const touch = touchesEma(ms.highs, ms.lows, mi.ema9, 3) || touchesEma(ms.highs, ms.lows, mi.ema13, 3) || touchesEma(ms.highs, ms.lows, mi.ema21, 3);
+  const cciUp = crossedAbove(mi.cci81, mL, 0), cciDown = crossedBelow(mi.cci81, mL, 0);
+  const rsiUp = mi.rsi21[mL]!=null && mi.rsi21[mL-1]!=null && mi.rsi21[mL] > mi.rsi21[mL-1];
+  const rsiDown = mi.rsi21[mL]!=null && mi.rsi21[mL-1]!=null && mi.rsi21[mL] < mi.rsi21[mL-1];
+  const bullCandle = ms.closes[mL] > ms.opens[mL], bearCandle = ms.closes[mL] < ms.opens[mL];
+  if(bullH1 && touch && cciUp && rsiUp && bullCandle) return {direction:'buy', note:'H1 trend up (EMA50>100>200, RSI>50), M15 pullback to EMA9/13/21 with CCI cross + RSI turn + bullish close'};
+  if(bearH1 && touch && cciDown && rsiDown && bearCandle) return {direction:'sell', note:'H1 trend down (EMA50<100<200, RSI<50), M15 pullback to EMA9/13/21 with CCI cross + RSI turn + bearish close'};
+  if(bullH1) return {direction:'watch', note:'H1 uptrend confirmed — waiting for M15 pullback trigger'};
+  if(bearH1) return {direction:'watch', note:'H1 downtrend confirmed — waiting for M15 pullback trigger'};
+  return {direction:'none', note:'H1 trend not aligned (need EMA50>100>200 stack + RSI vs 50)'};
+}
+
+// 2. EMA Alignment Setup: full 9>13>21>50>100>200 stack + CCI/RSI/candle strength on H1
+function detectEmaAlignment(h1){
+  if(!h1) return {direction:'none', note:'Waiting for H1 data'};
+  const ind=h1.ind, s=h1.series, last=s.closes.length-1;
+  const e9=ind.ema9[last], e13=ind.ema13[last], e21=ind.ema21[last], e50=ind.ema50[last], e100=ind.ema100[last], e200=ind.ema200[last];
+  const bull = e9>e13 && e13>e21 && e21>e50 && e50>e100 && e100>e200;
+  const bear = e9<e13 && e13<e21 && e21<e50 && e50<e100 && e100<e200;
+  const price = s.closes[last], cciV=ind.cci81[last], rsiV=ind.rsi21[last];
+  const o=s.opens[last], h=s.highs[last], l=s.lows[last], c=s.closes[last];
+  if(bull && price>e9 && cciV>100 && rsiV>55 && strongCandle(o,h,l,c,true)) return {direction:'buy', note:`Full EMA9→200 bullish stack, CCI ${fmt(cciV,1)}, RSI ${fmt(rsiV,1)}, strong bullish candle`};
+  if(bear && price<e9 && cciV<-100 && rsiV<45 && strongCandle(o,h,l,c,false)) return {direction:'sell', note:`Full EMA9→200 bearish stack, CCI ${fmt(cciV,1)}, RSI ${fmt(rsiV,1)}, strong bearish candle`};
+  if(bull) return {direction:'watch', note:'EMA stack bullish — waiting on CCI>100 / RSI>55 / strong candle'};
+  if(bear) return {direction:'watch', note:'EMA stack bearish — waiting on CCI<-100 / RSI<45 / strong candle'};
+  return {direction:'none', note:'EMA9–200 not fully aligned on H1'};
+}
+
+// 3. EMA Rejection Setup: price touches EMA9/13 and rejects with a pattern + RSI/CCI confirmation (M15)
+function detectEmaRejection(m15){
+  if(!m15) return {direction:'none', note:'Waiting for M15 data'};
+  const ind=m15.ind, s=m15.series, last=s.closes.length-1;
+  const touch9 = touchesEma(s.highs, s.lows, ind.ema9, 1), touch13 = touchesEma(s.highs, s.lows, ind.ema13, 1);
+  const o=s.opens[last], h=s.highs[last], l=s.lows[last], c=s.closes[last];
+  const po=s.opens[last-1], pc=s.closes[last-1];
+  const bullPattern = engulfing(po,pc,o,c,true) || rejection(o,h,l,c,true);
+  const bearPattern = engulfing(po,pc,o,c,false) || rejection(o,h,l,c,false);
+  const rsiV=ind.rsi21[last];
+  const cciRising = isRising(ind.cci81, last, 2), cciFalling = isFalling(ind.cci81, last, 2);
+  if((touch9||touch13) && bullPattern && rsiV>50 && cciRising) return {direction:'buy', note:'Rejection (hammer/engulfing/pin bar) off EMA9/13 with RSI>50 and rising CCI'};
+  if((touch9||touch13) && bearPattern && rsiV<50 && cciFalling) return {direction:'sell', note:'Rejection off EMA9/13 with RSI<50 and falling CCI'};
+  if(touch9||touch13) return {direction:'watch', note:'Price sitting at EMA9/13 — waiting for rejection candle + RSI/CCI confirmation'};
+  return {direction:'none', note:'Price not currently touching EMA9/13 on M15'};
+}
+
+// 4. Breakout Setup: range identified, close outside it with CCI/RSI confirmation (H1)
+function detectRangeBreakout(h1){
+  if(!h1) return {direction:'none', note:'Waiting for H1 data'};
+  const ind=h1.ind, s=h1.series, last=s.closes.length-1, lb=20;
+  if(last-lb<0) return {direction:'none', note:'Not enough H1 history yet'};
+  const rangeHigh = Math.max(...s.highs.slice(last-lb, last));
+  const rangeLow = Math.min(...s.lows.slice(last-lb, last));
+  const c=s.closes[last], cciV=ind.cci81[last], rsiV=ind.rsi21[last];
+  if(c>rangeHigh && cciV>100 && rsiV>60) return {direction:'buy', note:`Candle closed above range high ${fmt(rangeHigh)} — CCI ${fmt(cciV,1)}, RSI ${fmt(rsiV,1)}`};
+  if(c<rangeLow && cciV<-100 && rsiV<40) return {direction:'sell', note:`Candle closed below range low ${fmt(rangeLow)} — CCI ${fmt(cciV,1)}, RSI ${fmt(rsiV,1)}`};
+  return {direction:'none', note:`Range ${fmt(rangeLow)}–${fmt(rangeHigh)} on H1, price ${fmt(c)} still inside — no confirmed breakout close`};
+}
+
+// 6. EMA Bounce: established trend, price pulls to EMA21/50, CCI recovers from an extreme (H1)
+function detectEmaBounce(h1){
+  if(!h1) return {direction:'none', note:'Waiting for H1 data'};
+  const ind=h1.ind, s=h1.series, last=s.closes.length-1;
+  const bullTrend = ind.ema50[last]>ind.ema100[last] && ind.ema100[last]>ind.ema200[last];
+  const bearTrend = ind.ema50[last]<ind.ema100[last] && ind.ema100[last]<ind.ema200[last];
+  const touch = touchesEma(s.highs, s.lows, ind.ema21, 3) || touchesEma(s.highs, s.lows, ind.ema50, 3);
+  let dipped=false, spiked=false;
+  for(let i=Math.max(0,last-5); i<last; i++){
+    if(ind.cci81[i]!=null && ind.cci81[i]<-100) dipped=true;
+    if(ind.cci81[i]!=null && ind.cci81[i]>100) spiked=true;
+  }
+  const crossUp = crossedAbove(ind.cci81, last, -100), crossDown = crossedBelow(ind.cci81, last, 100);
+  const rsiV=ind.rsi21[last];
+  if(bullTrend && touch && dipped && crossUp && rsiV>50) return {direction:'buy', note:'Uptrend intact, CCI bounced back above -100 at EMA21/50, RSI holding above 50'};
+  if(bearTrend && touch && spiked && crossDown && rsiV<50) return {direction:'sell', note:'Downtrend intact, CCI dropped back below +100 at EMA21/50, RSI holding below 50'};
+  if(bullTrend && touch) return {direction:'watch', note:'Uptrend pulling into EMA21/50 — waiting on CCI bounce confirmation'};
+  if(bearTrend && touch) return {direction:'watch', note:'Downtrend pulling into EMA21/50 — waiting on CCI bounce confirmation'};
+  return {direction:'none', note:'No established trend/EMA touch alignment on H1'};
+}
+
+// 7. RSI + CCI Combo: simultaneous midline crosses with EMA50 trend filter (M15)
+function detectRsiCciCombo(m15){
+  if(!m15) return {direction:'none', note:'Waiting for M15 data'};
+  const ind=m15.ind, s=m15.series, last=s.closes.length-1;
+  const rsiUp = crossedAbove(ind.rsi21, last, 50), rsiDown = crossedBelow(ind.rsi21, last, 50);
+  const cciUp = crossedAbove(ind.cci81, last, 0), cciDown = crossedBelow(ind.cci81, last, 0);
+  const aboveEma50 = s.closes[last] > ind.ema50[last], belowEma50 = s.closes[last] < ind.ema50[last];
+  if(rsiUp && cciUp && aboveEma50) return {direction:'buy', note:'RSI crossed above 50 and CCI crossed above 0 together, price above EMA50'};
+  if(rsiDown && cciDown && belowEma50) return {direction:'sell', note:'RSI crossed below 50 and CCI crossed below 0 together, price below EMA50'};
+  return {direction:'none', note:'No simultaneous RSI/CCI midline cross on M15'};
+}
+
+// 9. CCI Extreme Setup: CCI unwinds from a deep extreme near EMA50 (M15)
+function detectCciExtreme(m15){
+  if(!m15) return {direction:'none', note:'Waiting for M15 data'};
+  const ind=m15.ind, s=m15.series, last=s.closes.length-1;
+  let extremeLow=false, extremeHigh=false;
+  for(let i=Math.max(0,last-5); i<last; i++){
+    if(ind.cci81[i]!=null && ind.cci81[i]<-200) extremeLow=true;
+    if(ind.cci81[i]!=null && ind.cci81[i]>200) extremeHigh=true;
+  }
+  const nearEma50 = touchesEma(s.highs, s.lows, ind.ema50, 3);
+  const bullCandle = s.closes[last]>s.opens[last], bearCandle = s.closes[last]<s.opens[last];
+  const crossUp = crossedAbove(ind.cci81, last, -100), crossDown = crossedBelow(ind.cci81, last, 100);
+  if(extremeLow && nearEma50 && bullCandle && crossUp) return {direction:'buy', note:'CCI recovered from below -200 near EMA50 with a bullish candle'};
+  if(extremeHigh && nearEma50 && bearCandle && crossDown) return {direction:'sell', note:'CCI dropped from above +200 near EMA50 with a bearish candle'};
+  return {direction:'none', note:'No CCI extreme reversal near EMA50 on M15'};
+}
+
+// 10. Multi-Timeframe Trend Setup: H4 trend -> H1 momentum -> M15 entry -> M5 execution
+function detectMultiTfTrend(h4, h1, m15, m5){
+  if(!h4 || !h1 || !m15 || !m5) return {direction:'none', note:'Waiting for H4/H1/M15/M5 data'};
+  const h4l = h4.series.closes.length-1;
+  const h4bull = h4.series.closes[h4l] > h4.ind.ema200[h4l] && h4.ind.ema50[h4l]>h4.ind.ema100[h4l] && h4.ind.ema100[h4l]>h4.ind.ema200[h4l];
+  const h4bear = h4.series.closes[h4l] < h4.ind.ema200[h4l] && h4.ind.ema50[h4l]<h4.ind.ema100[h4l] && h4.ind.ema100[h4l]<h4.ind.ema200[h4l];
+  const h1l = h1.series.closes.length-1;
+  const h1bull = h1.ind.ema9[h1l]>h1.ind.ema13[h1l] && h1.ind.ema13[h1l]>h1.ind.ema21[h1l] && h1.ind.rsi21[h1l]>50;
+  const h1bear = h1.ind.ema9[h1l]<h1.ind.ema13[h1l] && h1.ind.ema13[h1l]<h1.ind.ema21[h1l] && h1.ind.rsi21[h1l]<50;
+  const m15touch = touchesEma(m15.series.highs, m15.series.lows, m15.ind.ema21, 3);
+  const m5l = m5.series.closes.length-1;
+  const po=m5.series.opens[m5l-1], pc=m5.series.closes[m5l-1], o=m5.series.opens[m5l], c=m5.series.closes[m5l];
+  const bullEngulf = engulfing(po,pc,o,c,true), bearEngulf = engulfing(po,pc,o,c,false);
+  if(h4bull && h1bull && m15touch && bullEngulf) return {direction:'buy', note:'H4 bullish → H1 momentum up → M15 pullback → M5 bullish engulfing confirms'};
+  if(h4bear && h1bear && m15touch && bearEngulf) return {direction:'sell', note:'H4 bearish → H1 momentum down → M15 pullback → M5 bearish engulfing confirms'};
+  if(h4bull && h1bull) return {direction:'watch', note:'H4 + H1 aligned bullish — waiting for M15 pullback and M5 trigger'};
+  if(h4bear && h1bear) return {direction:'watch', note:'H4 + H1 aligned bearish — waiting for M15 pullback and M5 trigger'};
+  return {direction:'none', note:'H4 and H1 not yet aligned'};
+}
+
+// 11. 200 EMA Trend Filter: simple directional bias filter (H4)
+function detect200EmaFilter(h4){
+  if(!h4) return {direction:'none', note:'Waiting for H4 data'};
+  const ind=h4.ind, s=h4.series, last=s.closes.length-1;
+  const c=s.closes[last], e200=ind.ema200[last];
+  if(c>e200) return {direction:'buy', note:`Price ${fmt(c)} above EMA200 ${fmt(e200)} — only buys favored`};
+  if(c<e200) return {direction:'sell', note:`Price ${fmt(c)} below EMA200 ${fmt(e200)} — only sells favored`};
+  return {direction:'none', note:'Price sitting right on EMA200 — no clear filter bias'};
+}
+
+// 12. Fake Breakout Setup: level swept then immediately reclaimed (H1)
+function detectFakeBreakout(h1){
+  if(!h1) return {direction:'none', note:'Waiting for H1 data'};
+  const s=h1.series, ind=h1.ind, last=s.closes.length-1, lb=Math.max(0,last-60);
+  if(last<2) return {direction:'none', note:'Not enough H1 history yet'};
+  const pivots = findPivots(s.highs.slice(lb), s.lows.slice(lb), 2);
+  const resPivots = pivots.filter(p=>p.type==='high'), supPivots = pivots.filter(p=>p.type==='low');
+  if(resPivots.length===0 || supPivots.length===0) return {direction:'none', note:'Not enough pivot history yet'};
+  const resistance = Math.max(...resPivots.map(p=>p.price)), support = Math.min(...supPivots.map(p=>p.price));
+  const c=s.closes[last];
+  const brokeAbove = s.highs[last-1] > resistance, backBelow = c < resistance;
+  const brokeBelow = s.lows[last-1] < support, backAbove = c > support;
+  const cciV=ind.cci81[last], rsiV=ind.rsi21[last];
+  if(brokeAbove && backBelow && cciV<0 && rsiV<50) return {direction:'sell', note:`Swept resistance ~${fmt(resistance)}, closed back below it — likely fake breakout`};
+  if(brokeBelow && backAbove && cciV>0 && rsiV>50) return {direction:'buy', note:`Swept support ~${fmt(support)}, closed back above it — likely fake breakdown`};
+  return {direction:'none', note:`Levels: R ${fmt(resistance)} / S ${fmt(support)} — no fake breakout detected right now`};
+}
+
+// 13. Liquidity Sweep: prior high/low taken and immediately reclaimed with a reversal candle (M15)
+function detectLiquiditySweep(m15){
+  if(!m15) return {direction:'none', note:'Waiting for M15 data'};
+  const s=m15.series, ind=m15.ind, last=s.closes.length-1;
+  if(last-10<0) return {direction:'none', note:'Not enough M15 history yet'};
+  const prevHigh = Math.max(...s.highs.slice(last-10, last)), prevLow = Math.min(...s.lows.slice(last-10, last));
+  const tookHigh = s.highs[last] > prevHigh && s.closes[last] < prevHigh;
+  const tookLow = s.lows[last] < prevLow && s.closes[last] > prevLow;
+  const po=s.opens[last-1], pc=s.closes[last-1], o=s.opens[last], c=s.closes[last];
+  const bearEngulf = engulfing(po,pc,o,c,false), bullEngulf = engulfing(po,pc,o,c,true);
+  const cciFalling = isFalling(ind.cci81, last, 2), cciRising = isRising(ind.cci81, last, 2);
+  if(tookHigh && bearEngulf && cciFalling) return {direction:'sell', note:`Swept the prior high ${fmt(prevHigh)}, closed back below with bearish engulfing`};
+  if(tookLow && bullEngulf && cciRising) return {direction:'buy', note:`Swept the prior low ${fmt(prevLow)}, closed back above with bullish engulfing`};
+  return {direction:'none', note:'No liquidity sweep detected on M15'};
+}
+
+// 14. Double Bottom / Double Top: matched swing pivots + RSI divergence + neckline break (H1)
+function detectDoubleTopBottom(h1){
+  if(!h1) return {direction:'none', note:'Waiting for H1 data'};
+  const s=h1.series, ind=h1.ind, n=s.closes.length, last=n-1, lb=Math.max(0,n-100);
+  const pivots = findPivots(s.highs.slice(lb), s.lows.slice(lb), 2).map(p=>({...p, index:p.index+lb}));
+  const lowPivots = pivots.filter(p=>p.type==='low').slice(-2);
+  const highPivots = pivots.filter(p=>p.type==='high').slice(-2);
+  const c = s.closes[last];
+  if(lowPivots.length===2){
+    const [a,b]=lowPivots;
+    const similar = Math.abs(a.price-b.price)/a.price < 0.01;
+    const rsiA=ind.rsi21[a.index], rsiB=ind.rsi21[b.index];
+    const rsiDiverge = rsiA!=null && rsiB!=null && rsiB>rsiA;
+    const cciRising = isRising(ind.cci81, last, 3);
+    const between = s.highs.slice(a.index, b.index+1);
+    const neckline = between.length ? Math.max(...between) : null;
+    if(similar && rsiDiverge && cciRising && neckline!=null && c>neckline) return {direction:'buy', note:`Double bottom near ${fmt(a.price)}/${fmt(b.price)} with RSI divergence, neckline ${fmt(neckline)} broken`};
+    if(similar && rsiDiverge && cciRising) return {direction:'watch', note:'Double bottom forming with RSI divergence — waiting on neckline break'};
+  }
+  if(highPivots.length===2){
+    const [a,b]=highPivots;
+    const similar = Math.abs(a.price-b.price)/a.price < 0.01;
+    const rsiA=ind.rsi21[a.index], rsiB=ind.rsi21[b.index];
+    const rsiDiverge = rsiA!=null && rsiB!=null && rsiB<rsiA;
+    const cciFalling = isFalling(ind.cci81, last, 3);
+    const between = s.lows.slice(a.index, b.index+1);
+    const neckline = between.length ? Math.min(...between) : null;
+    if(similar && rsiDiverge && cciFalling && neckline!=null && c<neckline) return {direction:'sell', note:`Double top near ${fmt(a.price)}/${fmt(b.price)} with RSI divergence, neckline ${fmt(neckline)} broken`};
+    if(similar && rsiDiverge && cciFalling) return {direction:'watch', note:'Double top forming with RSI divergence — waiting on neckline break'};
+  }
+  return {direction:'none', note:'No double top/bottom pattern detected on H1'};
+}
+
+// 15. 9 EMA Scalping: established M5 trend, EMA9 touch, CCI cross confirms (M5)
+function detect9EmaScalp(m5){
+  if(!m5) return {direction:'none', note:'Waiting for M5 data'};
+  const s=m5.series, ind=m5.ind, last=s.closes.length-1;
+  const bullTrend = ind.ema9[last]>ind.ema21[last] && ind.ema21[last]>ind.ema50[last];
+  const bearTrend = ind.ema9[last]<ind.ema21[last] && ind.ema21[last]<ind.ema50[last];
+  const touch = touchesEma(s.highs, s.lows, ind.ema9, 2);
+  const crossUp = crossedAbove(ind.cci81, last, 0), crossDown = crossedBelow(ind.cci81, last, 0);
+  const bullCandle = s.closes[last]>s.opens[last], bearCandle = s.closes[last]<s.opens[last];
+  if(bullTrend && touch && crossUp && bullCandle) return {direction:'buy', note:'M5 uptrend, EMA9 touch with CCI cross up — scalp long, exit at recent swing high'};
+  if(bearTrend && touch && crossDown && bearCandle) return {direction:'sell', note:'M5 downtrend, EMA9 touch with CCI cross down — scalp short, exit at recent swing low'};
+  if(bullTrend && touch) return {direction:'watch', note:'M5 uptrend at EMA9 — waiting on CCI cross confirmation'};
+  if(bearTrend && touch) return {direction:'watch', note:'M5 downtrend at EMA9 — waiting on CCI cross confirmation'};
+  return {direction:'none', note:'No M5 EMA9 scalp setup active right now'};
+}
+
 
 async function fetchSeries(tf){
   const interval = TF_TD_INTERVAL[tf];
@@ -508,10 +738,22 @@ async function fetchSeries(tf){
 
 function computeIndicators(series){
   return {
-    ema8: ema(series.closes,8), ema13: ema(series.closes,13), ema21: ema(series.closes,21),
+    ema8: ema(series.closes,8), ema9: ema(series.closes,9), ema13: ema(series.closes,13), ema21: ema(series.closes,21),
     ema50: ema(series.closes,50), ema100: ema(series.closes,100), ema200: ema(series.closes,200),
     rsi21: rsiWilder(series.closes,21), cci81: cci(series.highs, series.lows, series.closes, 81)
   };
+}
+
+/* ---------- Small signal-logic helpers for the 15 named setups below ---------- */
+function crossedAbove(arr, i, level){ return i>0 && arr[i-1]!=null && arr[i]!=null && arr[i-1] <= level && arr[i] > level; }
+function crossedBelow(arr, i, level){ return i>0 && arr[i-1]!=null && arr[i]!=null && arr[i-1] >= level && arr[i] < level; }
+function isRising(arr, i, look){ if(i-look<0 || arr[i]==null || arr[i-look]==null) return false; return arr[i] > arr[i-look]; }
+function isFalling(arr, i, look){ if(i-look<0 || arr[i]==null || arr[i-look]==null) return false; return arr[i] < arr[i-look]; }
+function strongCandle(o,h,l,c,bullish){
+  const range = h-l; if(range<=0) return false;
+  const body = Math.abs(c-o);
+  const dirOk = bullish ? c>o : c<o;
+  return dirOk && (body/range) > 0.6;
 }
 
 /* ---------- Evaluate checklist from live data ---------- */
@@ -641,21 +883,41 @@ function setup1Direction(){
 }
 
 const SETUPS_META = [
-  {id:'trend',     name:'Trend Pullback (5-TF)',        tf:'D1→M5'},
-  {id:'breakout',  name:'Breakout & Retest',             tf:'H4'},
-  {id:'divergence',name:'RSI Divergence Reversal',       tf:'M15'},
-  {id:'squeeze',   name:'Bollinger Squeeze Breakout',    tf:'H1'}
+  {id:'trendPullback',   name:'1. Trend Pullback (Best for Gold)', tf:'H1 → M15'},
+  {id:'emaAlignment',    name:'2. EMA Alignment Setup',            tf:'H1'},
+  {id:'emaRejection',    name:'3. EMA Rejection Setup',            tf:'M15'},
+  {id:'rangeBreakout',   name:'4. Breakout Setup',                 tf:'H1'},
+  {id:'breakoutRetest',  name:'5. Breakout Retest',                tf:'H1'},
+  {id:'emaBounce',       name:'6. EMA Bounce',                     tf:'H1'},
+  {id:'rsiCciCombo',     name:'7. RSI + CCI Combo',                tf:'M15'},
+  {id:'rsiDivergence',   name:'8. RSI Divergence',                 tf:'H1'},
+  {id:'cciExtreme',      name:'9. CCI Extreme Setup',              tf:'M15'},
+  {id:'multiTfTrend',    name:'10. Multi-Timeframe Trend Setup',   tf:'H4→H1→M15→M5'},
+  {id:'ema200Filter',    name:'11. 200 EMA Trend Filter',          tf:'H4'},
+  {id:'fakeBreakout',    name:'12. Fake Breakout Setup',           tf:'H1'},
+  {id:'liquiditySweep',  name:'13. Liquidity Sweep',               tf:'M15'},
+  {id:'doubleTopBottom', name:'14. Double Bottom / Double Top',    tf:'H1'},
+  {id:'emaScalp9',       name:'15. 9 EMA Scalping',                tf:'M5'}
 ];
 let setupResults = {}; // id -> {direction, note}
 
 function evaluateAllSetups(){
-  setupResults.trend = setup1Direction();
-  const h4 = seriesCache['H4'];
-  setupResults.breakout = h4 ? detectBreakoutRetest(h4.series) : {direction:'none', note:'Waiting for H4 data'};
-  const m15 = seriesCache['M15'];
-  setupResults.divergence = m15 ? detectDivergence(m15.series, m15.ind.rsi21) : {direction:'none', note:'Waiting for M15 data'};
-  const h1 = seriesCache['H1'];
-  setupResults.squeeze = h1 ? detectSqueeze(h1.series) : {direction:'none', note:'Waiting for H1 data'};
+  const d1 = seriesCache['D1'], h4 = seriesCache['H4'], h1 = seriesCache['H1'], m15 = seriesCache['M15'], m5 = seriesCache['M5'];
+  setupResults.trendPullback   = detectTrendPullback(h1, m15);
+  setupResults.emaAlignment    = h1  ? detectEmaAlignment(h1)                 : {direction:'none', note:'Waiting for H1 data'};
+  setupResults.emaRejection    = m15 ? detectEmaRejection(m15)                : {direction:'none', note:'Waiting for M15 data'};
+  setupResults.rangeBreakout   = h1  ? detectRangeBreakout(h1)                : {direction:'none', note:'Waiting for H1 data'};
+  setupResults.breakoutRetest  = h1  ? detectBreakoutRetest(h1.series)        : {direction:'none', note:'Waiting for H1 data'};
+  setupResults.emaBounce       = h1  ? detectEmaBounce(h1)                    : {direction:'none', note:'Waiting for H1 data'};
+  setupResults.rsiCciCombo     = m15 ? detectRsiCciCombo(m15)                 : {direction:'none', note:'Waiting for M15 data'};
+  setupResults.rsiDivergence   = h1  ? detectDivergence(h1.series, h1.ind.rsi21) : {direction:'none', note:'Waiting for H1 data'};
+  setupResults.cciExtreme      = m15 ? detectCciExtreme(m15)                  : {direction:'none', note:'Waiting for M15 data'};
+  setupResults.multiTfTrend    = detectMultiTfTrend(h4, h1, m15, m5);
+  setupResults.ema200Filter    = h4  ? detect200EmaFilter(h4)                 : {direction:'none', note:'Waiting for H4 data'};
+  setupResults.fakeBreakout    = h1  ? detectFakeBreakout(h1)                 : {direction:'none', note:'Waiting for H1 data'};
+  setupResults.liquiditySweep  = m15 ? detectLiquiditySweep(m15)              : {direction:'none', note:'Waiting for M15 data'};
+  setupResults.doubleTopBottom = h1  ? detectDoubleTopBottom(h1)              : {direction:'none', note:'Waiting for H1 data'};
+  setupResults.emaScalp9       = m5  ? detect9EmaScalp(m5)                    : {direction:'none', note:'Waiting for M5 data'};
 }
 
 function renderSetupCards(){
