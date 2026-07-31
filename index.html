@@ -193,12 +193,16 @@
         <label>Account balance (USD)</label>
         <input type="number" id="balanceInput" placeholder="e.g. 5000" min="0" step="0.01" style="min-width:140px;">
       </div>
+      <div class="field">
+        <label>Risk per trade (%)</label>
+        <input type="number" id="riskPctInput" placeholder="e.g. 1" min="0.1" max="20" step="0.1" style="min-width:100px;">
+      </div>
       <button class="btn primary" id="saveSettings">Save &amp; start auto-checking</button>
       <button class="btn" id="fetchNow">Refresh now</button>
       <button class="btn" id="stopAuto">Stop auto mode</button>
     </div>
     <div class="status-line" id="statusLine">No API key saved yet — running in manual checklist mode.</div>
-    <div class="settings-note">Get a free key at twelvedata.com (no card required). The key is sent directly from your browser to Twelve Data to fetch price data — it never passes through Anthropic or Claude, and is only saved in this portal's own storage for your convenience. Account balance is used only to size the risk/profit numbers shown on each setup card — it's stored locally in this portal's own storage and never sent anywhere.</div>
+    <div class="settings-note">Get a free key at twelvedata.com (no card required). The key is sent directly from your browser to Twelve Data to fetch price data — it never passes through Anthropic or Claude, and is only saved in this portal's own storage for your convenience. Account balance and risk % are used to auto-calculate stop loss, take profit and lot size on each setup card — stored locally in this portal's own storage and never sent anywhere.</div>
   </div>
 
   <div id="masterBanner" class="neutral">
@@ -216,12 +220,12 @@
     <div class="tp-grid">
       <div class="tp-stat dir"><div class="lbl">Direction</div><div class="val" id="tpDirection">—</div></div>
       <div class="tp-stat entry"><div class="lbl">Entry price</div><div class="val" id="tpEntry">—</div></div>
-      <div class="tp-stat"><div class="lbl">Stop loss</div><div class="val" id="tpSL">—</div></div>
-      <div class="tp-stat"><div class="lbl">Take profit</div><div class="val" id="tpTP">—</div></div>
-      <div class="tp-stat"><div class="lbl">Lot size</div><div class="val" id="tpLots">—</div></div>
-      <div class="tp-stat"><div class="lbl">Risk / Profit</div><div class="val" id="tpRiskProfit">—</div></div>
+      <div class="tp-stat"><div class="lbl">Stop loss (-1% price)</div><div class="val" id="tpSL">—</div></div>
+      <div class="tp-stat"><div class="lbl">Take profit (1:2)</div><div class="val" id="tpTP">—</div></div>
+      <div class="tp-stat"><div class="lbl">Lot size (1% balance risk)</div><div class="val" id="tpLots">—</div></div>
+      <div class="tp-stat"><div class="lbl">$ Risk at SL / $ Profit at TP</div><div class="val" id="tpRiskProfit">—</div></div>
     </div>
-    <div class="tp-note" id="tpNote">Averages the entry price across every setup currently aligned in the majority direction, then applies the same 1% stop / 1:2 reward formula used on the cards below. Lot size is sized to risk 1% of the account balance entered above.</div>
+    <div class="tp-note" id="tpNote">Averages the entry price across every setup currently aligned in the majority direction. The stop is placed 1% of the entry <i>price</i> away and the target at 1:2 reward; the lot size is then solved so a hit on that stop costs exactly 1% of the account <i>balance</i> entered above — these are two different 1%s, not the same number.</div>
   </div>
 
   <div class="section-title">Setup 1 — Trend Pullback (5-timeframe confluence)</div>
@@ -258,7 +262,7 @@
     <br><br>
     <b>What's automatic vs. what isn't:</b> items tagged <span class="badge auto">AUTO</span> are computed every refresh cycle straight from live OHLC data (EMA stack order, RSI(21), CCI(81), EMA pullback proximity, candle patterns, market-structure and overhead-resistance/support heuristics). Market structure and resistance/support are estimated from recent swing pivots — verify visually if a call looks borderline. <b>Enter</b>, <b>Stop</b>, and <b>Target</b> stay as manual checkboxes with a computed price suggestion next to them, since those are execution decisions, not yes/no conditions. This tool gives you information to make your own trading decision — it isn't financial advice.
     <br><br>
-    <b>Buy/sell price, stop &amp; take-profit on each card:</b> for any setup currently signaling BUY or SELL, the card shows the entry price (last close on that setup's timeframe), a stop loss set 1% away from entry, and a take-profit at a 1:2 risk:reward. If you enter your <b>account balance</b> above, each card also shows the dollar risk (1% of balance), the dollar profit at target, and a suggested position size in standard lots (1 lot = 100oz). This is a fixed formula for illustration, not a recommendation — always size positions to your own risk tolerance and broker's contract specs.
+    <b>Buy/sell price, stop &amp; take-profit on each card:</b> for any setup currently signaling BUY or SELL, the card shows the entry price (last close on that setup's timeframe), a stop loss set 1% of price away from entry, and a take-profit at a 1:2 risk:reward. These are two different 1%s — the stop is placed 1% of the <i>entry price</i> away; the <b>lot size</b> is then solved so that if price hits that stop, the dollar loss equals exactly 1% of your <b>account balance</b> (not 1% of price). Enter your account balance above to see the $ risk, $ profit at target, and the resulting position size in standard lots (1 lot = 100oz). This is a fixed formula for illustration, not a recommendation — always size positions to your own risk tolerance and broker's contract specs.
   </div>
 
   <div class="section-title">Chart for confirmation &amp; identification</div>
@@ -308,7 +312,7 @@ const AUTO_MAP = {
 
 let state = { buy:{}, sell:{} };
 let notes = { buy:{}, sell:{} }; // itemKey -> note string
-let config = { apiKey:'', symbol:'XAU/USD', refreshMinutes:3, accountBalance:0 };
+let config = { apiKey:'', symbol:'XAU/USD', refreshMinutes:3, accountBalance:0, riskPct:1 };
 let autoMode = false;
 let prevBannerState = "neutral";
 let seriesCache = {}; // tf -> {opens,highs,lows,closes,times}
@@ -1072,11 +1076,11 @@ const SETUP_PRIMARY_TF = {
   cciZeroLine:'H1', londonBreakout:'M15'
 };
 
-// Entry/SL/TP + $ risk-reward, using a 1% price-distance stop and a 1:2 risk:reward target,
-// with position size sized to risk 1% of the entered account balance.
-function tradeMath(direction, entry, balance){
+// Entry/SL/TP + $ risk-reward, using a user-configurable price-distance stop (= risk %) and a 1:2 risk:reward target,
+// with position size sized to risk that same % of the entered account balance.
+function tradeMath(direction, entry, balance, riskPctInput){
   if((direction!=='buy' && direction!=='sell') || entry==null || isNaN(entry)) return null;
-  const riskPct = 0.01;   // stop distance = 1% of entry price
+  const riskPct = ((riskPctInput!=null && !isNaN(riskPctInput) && riskPctInput>0) ? riskPctInput : 1) / 100;   // stop distance = riskPct of entry price
   const rr = 2;           // target = 1:2 risk:reward
   const slDist = entry*riskPct;
   const sl = direction==='buy' ? entry - slDist : entry + slDist;
@@ -1084,7 +1088,7 @@ function tradeMath(direction, entry, balance){
   const tp = direction==='buy' ? entry + tpDist : entry - tpDist;
   let riskAmt=null, profitAmt=null, lots=null;
   if(balance && balance>0){
-    riskAmt = balance*riskPct;      // risking 1% of account, matching the 1% stop
+    riskAmt = balance*riskPct;      // risking riskPct of account, matching the SL distance
     profitAmt = riskAmt*rr;
     lots = riskAmt / (slDist*100);  // XAUUSD: 1 standard lot = 100 oz, so $ per lot per $1 move = 100
   }
@@ -1133,17 +1137,18 @@ function renderSetupCards(){
     const dirLabel = r.direction==='buy' ? 'BUY' : r.direction==='sell' ? 'SELL' : r.direction==='watch' ? 'WATCHING' : 'NO SIGNAL';
     let tradeHtml = '';
     if(r.direction==='buy' || r.direction==='sell'){
-      const tm = tradeMath(r.direction, r.price, config.accountBalance);
+      const tm = tradeMath(r.direction, r.price, config.accountBalance, config.riskPct);
       if(tm){
+        const rp = fmt(tm.riskPct*100, tm.riskPct*100 % 1 === 0 ? 0 : 1);
         tradeHtml = `<div class="trade-math">
           <div class="row"><span>${r.direction==='buy'?'Buy':'Sell'} at</span><b>${fmt(tm.entry)}</b></div>
-          <div class="row"><span>Stop loss (-1%)</span><b>${fmt(tm.sl)}</b></div>
+          <div class="row"><span>Stop loss (-${rp}% of price)</span><b>${fmt(tm.sl)}</b></div>
           <div class="row"><span>Take profit (1:2)</span><b>${fmt(tm.tp)}</b></div>
           ${tm.riskAmt!=null
-            ? `<div class="row"><span>Risk (1% of balance)</span><b>$${fmt(tm.riskAmt,2)}</b></div>
-               <div class="row"><span>Profit at TP</span><b>$${fmt(tm.profitAmt,2)}</b></div>
-               <div class="row"><span>Suggested size</span><b>${fmt(tm.lots,2)} lots</b></div>`
-            : `<div class="row dim"><span>Enter your account balance above to see $ risk/profit and position size</span></div>`}
+            ? `<div class="row"><span>$ risk at SL (${rp}% of balance)</span><b>$${fmt(tm.riskAmt,2)}</b></div>
+               <div class="row"><span>$ profit at TP</span><b>$${fmt(tm.profitAmt,2)}</b></div>
+               <div class="row"><span>Lot size (sized to ${rp}% balance risk)</span><b>${fmt(tm.lots,2)} lots</b></div>`
+            : `<div class="row dim"><span>Enter your account balance above to see $ risk/profit and lot size</span></div>`}
         </div>`;
       }
     }
@@ -1231,7 +1236,10 @@ function updateTradePlan(masterCls, buyCount, sellCount){
   }
 
   const avgEntry = eligible.reduce((s,r)=>s+r.price, 0) / eligible.length;
-  const tm = tradeMath(direction, avgEntry, config.accountBalance);
+  const tm = tradeMath(direction, avgEntry, config.accountBalance, config.riskPct);
+  const rp = fmt(tm.riskPct*100, tm.riskPct*100 % 1 === 0 ? 0 : 1);
+  document.querySelector('#tradePlan .tp-stat:nth-child(3) .lbl').textContent = `Stop loss (-${rp}% of price)`;
+  document.querySelector('#tradePlan .tp-stat:nth-child(5) .lbl').textContent = `Lot size (${rp}% balance risk)`;
 
   entryEl.textContent = fmt(tm.entry);
   slEl.textContent = fmt(tm.sl);
@@ -1240,7 +1248,7 @@ function updateTradePlan(masterCls, buyCount, sellCount){
   if(tm.lots!=null){
     lotsEl.textContent = `${fmt(tm.lots,2)} lots`;
     rpEl.textContent = `-$${fmt(tm.riskAmt,2)} / +$${fmt(tm.profitAmt,2)}`;
-    noteEl.textContent = `Entry price averaged across ${eligible.length} eligible setup${eligible.length===1?'':'s'} signaling ${direction.toUpperCase()}. Stop = 1% from entry, target = 1:2 reward. Lot size sized to risk 1% of the account balance entered above (1 lot = 100oz).`;
+    noteEl.textContent = `Entry price averaged across ${eligible.length} eligible setup${eligible.length===1?'':'s'} signaling ${direction.toUpperCase()}. Stop = ${rp}% of price from entry, target = 1:2 reward. Lot size auto-calculated to risk ${rp}% of the account balance entered above (1 lot = 100oz).`;
   } else {
     lotsEl.textContent = '—';
     rpEl.textContent = '—';
@@ -1468,6 +1476,8 @@ document.getElementById('saveSettings').addEventListener('click', async ()=>{
   config.refreshMinutes = Math.max(1, parseInt(document.getElementById('refreshInput').value)||3);
   const balVal = parseFloat(document.getElementById('balanceInput').value);
   config.accountBalance = isNaN(balVal) ? 0 : Math.max(0, balVal);
+  const riskVal = parseFloat(document.getElementById('riskPctInput').value);
+  config.riskPct = (isNaN(riskVal) || riskVal<=0) ? 1 : Math.min(20, riskVal);
   await saveConfig();
   autoMode = !!config.apiKey;
   applyAutoModeUI();
@@ -1483,6 +1493,13 @@ document.getElementById('saveSettings').addEventListener('click', async ()=>{
 document.getElementById('balanceInput').addEventListener('input', ()=>{
   const v = parseFloat(document.getElementById('balanceInput').value);
   config.accountBalance = isNaN(v) ? 0 : Math.max(0, v);
+  saveConfig();
+  renderSetupCards();
+  updateMasterBanner();
+});
+document.getElementById('riskPctInput').addEventListener('input', ()=>{
+  const v = parseFloat(document.getElementById('riskPctInput').value);
+  config.riskPct = (isNaN(v) || v<=0) ? 1 : Math.min(20, v);
   saveConfig();
   renderSetupCards();
   updateMasterBanner();
@@ -1509,6 +1526,7 @@ function tickClock(){ document.getElementById('clock').textContent = new Date().
   document.getElementById('symbolInput').value = config.symbol || 'XAU/USD';
   document.getElementById('refreshInput').value = config.refreshMinutes || 3;
   document.getElementById('balanceInput').value = config.accountBalance || '';
+  document.getElementById('riskPctInput').value = config.riskPct || 1;
   autoMode = !!config.apiKey;
   applyAutoModeUI();
   applyStateToDOM();
