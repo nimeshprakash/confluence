@@ -220,12 +220,13 @@
     <div class="tp-grid">
       <div class="tp-stat dir"><div class="lbl">Direction</div><div class="val" id="tpDirection">—</div></div>
       <div class="tp-stat entry"><div class="lbl">Entry price</div><div class="val" id="tpEntry">—</div></div>
-      <div class="tp-stat"><div class="lbl">Stop loss (-1% price)</div><div class="val" id="tpSL">—</div></div>
-      <div class="tp-stat"><div class="lbl">Take profit (1:2)</div><div class="val" id="tpTP">—</div></div>
-      <div class="tp-stat"><div class="lbl">Lot size (1% balance risk)</div><div class="val" id="tpLots">—</div></div>
+      <div class="tp-stat"><div class="lbl">Stop loss</div><div class="val" id="tpSL">—</div></div>
+      <div class="tp-stat"><div class="lbl">Take profit</div><div class="val" id="tpTP">—</div></div>
+      <div class="tp-stat"><div class="lbl">Lot size</div><div class="val" id="tpLots">—</div></div>
       <div class="tp-stat"><div class="lbl">$ Risk at SL / $ Profit at TP</div><div class="val" id="tpRiskProfit">—</div></div>
     </div>
-    <div class="tp-note" id="tpNote">Averages the entry price across every setup currently aligned in the majority direction. The stop is placed 1% of the entry <i>price</i> away and the target at 1:2 reward; the lot size is then solved so a hit on that stop costs exactly 1% of the account <i>balance</i> entered above — these are two different 1%s, not the same number.</div>
+    <div class="tp-note" id="tpRationale" style="margin-bottom:4px;"></div>
+    <div class="tp-note" id="tpNote">Picks the highest-timeframe setup currently aligned with the majority direction and derives entry/SL/TP from its market structure: BOS/CHoCH swing breaks, unmitigated Fair Value Gaps, and liquidity-pool clusters (equal highs/lows). Lot size is then solved so a hit on the structural stop costs exactly your chosen risk % of the account balance entered above.</div>
   </div>
 
   <div class="section-title">Setup 1 — Trend Pullback (5-timeframe confluence)</div>
@@ -262,7 +263,7 @@
     <br><br>
     <b>What's automatic vs. what isn't:</b> items tagged <span class="badge auto">AUTO</span> are computed every refresh cycle straight from live OHLC data (EMA stack order, RSI(21), CCI(81), EMA pullback proximity, candle patterns, market-structure and overhead-resistance/support heuristics). Market structure and resistance/support are estimated from recent swing pivots — verify visually if a call looks borderline. <b>Enter</b>, <b>Stop</b>, and <b>Target</b> stay as manual checkboxes with a computed price suggestion next to them, since those are execution decisions, not yes/no conditions. This tool gives you information to make your own trading decision — it isn't financial advice.
     <br><br>
-    <b>Buy/sell price, stop &amp; take-profit on each card:</b> for any setup currently signaling BUY or SELL, the card shows the entry price (last close on that setup's timeframe), a stop loss set 1% of price away from entry, and a take-profit at a 1:2 risk:reward. These are two different 1%s — the stop is placed 1% of the <i>entry price</i> away; the <b>lot size</b> is then solved so that if price hits that stop, the dollar loss equals exactly 1% of your <b>account balance</b> (not 1% of price). Enter your account balance above to see the $ risk, $ profit at target, and the resulting position size in standard lots (1 lot = 100oz). This is a fixed formula for illustration, not a recommendation — always size positions to your own risk tolerance and broker's contract specs.
+    <b>Buy/sell price, stop &amp; take-profit on each card:</b> for any setup currently signaling BUY or SELL, entry, stop loss and take profit are now derived from market structure on that setup's timeframe rather than a fixed % distance. <b>Entry</b> uses the nearest unmitigated Fair Value Gap (FVG) in the trade's direction if one sits within 2% of price, otherwise the current market price. <b>Stop loss</b> is placed beyond the protecting swing pivot, and beyond any liquidity pool (cluster of equal highs/lows) sitting just past it, plus a small buffer. <b>Take profit</b> targets the next opposing liquidity pool or swing extreme in profit, provided it clears at least 1:1.2 reward — otherwise it falls back to a 1:2 reward multiple of the stop distance. Each card also shows the prevailing structure trend and the most recent BOS (Break of Structure, trend continuation) or CHoCH (Change of Character, first break against the trend). The <b>lot size</b> is solved so that a hit on the stop costs exactly your configured <b>risk %</b> of your <b>account balance</b>. Enter your account balance and risk % above to see the $ risk, $ profit at target, and the resulting position size in standard lots (1 lot = 100oz). This is a heuristic, not a recommendation — always confirm structure visually and size positions to your own risk tolerance and broker's contract specs.
   </div>
 
   <div class="section-title">Chart for confirmation &amp; identification</div>
@@ -415,6 +416,148 @@ function clearOverhead(highs, lows, currentPrice, wantAbove, thresholdPct){
   const dist = Math.abs(nearest-currentPrice)/currentPrice;
   return {ok: dist > thresholdPct, dist};
 }
+
+/* ---------- Market structure: BOS / CHoCH, Fair Value Gaps, Liquidity Pools ---------- */
+// Walks forward through confirmed swing pivots. A close beyond the most recent unbroken
+// swing high/low is a structure break: continuation of the prevailing trend = BOS,
+// the first break against it = CHoCH.
+function structureEvents(series){
+  const closes = series.closes;
+  const pivots = findPivots(series.highs, series.lows, 3);
+  const pivHighs = pivots.filter(p=>p.type==='high').sort((a,b)=>a.index-b.index);
+  const pivLows  = pivots.filter(p=>p.type==='low').sort((a,b)=>a.index-b.index);
+  let hi=0, lo=0, refHigh=null, refLow=null, trend='unclear';
+  const events=[];
+  for(let i=0;i<closes.length;i++){
+    while(hi<pivHighs.length && pivHighs[hi].index===i){ refHigh = pivHighs[hi]; hi++; }
+    while(lo<pivLows.length  && pivLows[lo].index===i){ refLow  = pivLows[lo];  lo++; }
+    if(refHigh && closes[i] > refHigh.price){
+      events.push({type: trend==='up' ? 'BOS' : 'CHoCH', direction:'bullish', index:i, level:refHigh.price});
+      trend='up'; refHigh=null;
+    }
+    if(refLow && closes[i] < refLow.price){
+      events.push({type: trend==='down' ? 'BOS' : 'CHoCH', direction:'bearish', index:i, level:refLow.price});
+      trend='down'; refLow=null;
+    }
+  }
+  return {trend, events, pivots};
+}
+
+// 3-candle Fair Value Gaps (imbalances), flagged mitigated once price trades back through the zone.
+function detectFVGs(series, lookback){
+  const n = series.closes.length;
+  const start = Math.max(2, n-(lookback||150));
+  const fvgs=[];
+  for(let i=start;i<n;i++){
+    if(series.lows[i] > series.highs[i-2]) fvgs.push({type:'bullish', top:series.lows[i], bottom:series.highs[i-2], index:i});
+    if(series.highs[i] < series.lows[i-2]) fvgs.push({type:'bearish', top:series.lows[i-2], bottom:series.highs[i], index:i});
+  }
+  fvgs.forEach(f=>{
+    f.mitigated=false;
+    for(let j=f.index+1;j<n;j++){
+      if(series.lows[j] <= f.top && series.highs[j] >= f.bottom){ f.mitigated=true; break; }
+    }
+  });
+  return fvgs;
+}
+
+// Liquidity pools: clusters of equal(ish) swing highs/lows where resting stop orders build up.
+function detectLiquidityPools(series, tolPct){
+  const tol = tolPct || 0.001;
+  const pivots = findPivots(series.highs, series.lows, 2);
+  function cluster(points){
+    if(!points.length) return [];
+    const sorted = points.slice().sort((a,b)=>a.price-b.price);
+    const clusters=[]; let cur=[sorted[0]];
+    for(let i=1;i<sorted.length;i++){
+      if(Math.abs(sorted[i].price-cur[cur.length-1].price)/sorted[i].price <= tol) cur.push(sorted[i]);
+      else { if(cur.length>=2) clusters.push(cur); cur=[sorted[i]]; }
+    }
+    if(cur.length>=2) clusters.push(cur);
+    return clusters.map(c=>({price:c.reduce((s,p)=>s+p.price,0)/c.length, count:c.length, lastIndex:Math.max(...c.map(p=>p.index))}));
+  }
+  return {
+    sellSide: cluster(pivots.filter(p=>p.type==='high')), // equal highs = resting liquidity above price
+    buySide:  cluster(pivots.filter(p=>p.type==='low'))   // equal lows  = resting liquidity below price
+  };
+}
+
+// Optimum entry/SL/TP derived from structure: entry at an unmitigated FVG retracement (or
+// market if none nearby), stop placed beyond the protecting swing/liquidity pool, target at
+// the next opposing liquidity pool or swing extreme (falls back to 1:2 RR if none qualifies).
+function structureTradeLevels(direction, series){
+  const n = series.closes.length, last = n-1;
+  const price = series.closes[last];
+  const buy = direction==='buy';
+  const struct = structureEvents(series);
+  const fvgs = detectFVGs(series);
+  const pools = detectLiquidityPools(series);
+  const pivots = struct.pivots;
+
+  let entry = price, entryType = 'Market (no fresh FVG nearby)', entryNote = '';
+  const wantType = buy ? 'bullish' : 'bearish';
+  const cand = fvgs.filter(f => f.type===wantType && !f.mitigated && (buy ? f.top<=price*1.0005 : f.bottom>=price*0.9995));
+  if(cand.length){
+    cand.sort((a,b)=> Math.abs((a.top+a.bottom)/2-price) - Math.abs((b.top+b.bottom)/2-price));
+    const f = cand[0], mid = (f.top+f.bottom)/2;
+    if(Math.abs(mid-price)/price <= 0.02){
+      entry = mid; entryType = `${buy?'Bullish':'Bearish'} FVG retracement`; entryNote = `${fmt(f.bottom)}\u2013${fmt(f.top)}`;
+    }
+  }
+
+  const buffer = price*0.0015;
+  let sl, slType;
+  if(buy){
+    let refLow=null;
+    for(let i=pivots.length-1;i>=0;i--){ if(pivots[i].type==='low' && pivots[i].price<entry){ refLow=pivots[i]; break; } }
+    let base = refLow ? refLow.price : price*0.99;
+    const pool = pools.buySide.filter(p=>p.price<=base*1.001).sort((a,b)=>b.price-a.price)[0];
+    if(pool) base = Math.min(base, pool.price);
+    sl = base - buffer;
+    slType = refLow ? (pool ? 'Below swept liquidity pool' : 'Below recent swing low') : 'Fallback 1% (no swing low found)';
+  } else {
+    let refHigh=null;
+    for(let i=pivots.length-1;i>=0;i--){ if(pivots[i].type==='high' && pivots[i].price>entry){ refHigh=pivots[i]; break; } }
+    let base = refHigh ? refHigh.price : price*1.01;
+    const pool = pools.sellSide.filter(p=>p.price>=base*0.999).sort((a,b)=>a.price-b.price)[0];
+    if(pool) base = Math.max(base, pool.price);
+    sl = base + buffer;
+    slType = refHigh ? (pool ? 'Above swept liquidity pool' : 'Above recent swing high') : 'Fallback 1% (no swing high found)';
+  }
+  const slDist = Math.abs(entry-sl);
+
+  let tp, tpType;
+  if(buy){
+    const poolsAbove = pools.sellSide.filter(p=>p.price>entry).sort((a,b)=>a.price-b.price);
+    const highsAbove = pivots.filter(p=>p.type==='high' && p.price>entry).sort((a,b)=>a.price-b.price);
+    const target = poolsAbove[0] ? poolsAbove[0].price : (highsAbove[0] ? highsAbove[0].price : null);
+    if(target && (target-entry) >= slDist*1.2){ tp=target; tpType = poolsAbove[0] ? 'Liquidity pool (equal highs)' : 'Prior swing high'; }
+    else { tp = entry+slDist*2; tpType = 'Fallback 1:2 RR (no clean target)'; }
+  } else {
+    const poolsBelow = pools.buySide.filter(p=>p.price<entry).sort((a,b)=>b.price-a.price);
+    const lowsBelow = pivots.filter(p=>p.type==='low' && p.price<entry).sort((a,b)=>b.price-a.price);
+    const target = poolsBelow[0] ? poolsBelow[0].price : (lowsBelow[0] ? lowsBelow[0].price : null);
+    if(target && (entry-target) >= slDist*1.2){ tp=target; tpType = poolsBelow[0] ? 'Liquidity pool (equal lows)' : 'Prior swing low'; }
+    else { tp = entry-slDist*2; tpType = 'Fallback 1:2 RR (no clean target)'; }
+  }
+  const rr = slDist>0 ? Math.abs(tp-entry)/slDist : null;
+  const lastEvent = struct.events.length ? struct.events[struct.events.length-1] : null;
+
+  return {entry, sl, tp, slDist, rr, entryType, entryNote, slType, tpType, trend:struct.trend, lastEvent};
+}
+
+// Position size from a structural stop distance, risking riskPctInput% of the account balance.
+function sizePosition(slDist, entry, tp, balance, riskPctInput){
+  const riskPct = ((riskPctInput!=null && !isNaN(riskPctInput) && riskPctInput>0) ? riskPctInput : 1)/100;
+  let riskAmt=null, profitAmt=null, lots=null;
+  if(balance && balance>0 && slDist>0){
+    riskAmt = balance*riskPct;
+    lots = riskAmt/(slDist*100);
+    profitAmt = lots*100*Math.abs(tp-entry);
+  }
+  return {riskPct, riskAmt, profitAmt, lots};
+}
+
 function touchesEma(highs, lows, emaArr, lookback){
   const n = highs.length;
   for(let i=1;i<=lookback;i++){
@@ -1076,24 +1219,8 @@ const SETUP_PRIMARY_TF = {
   cciZeroLine:'H1', londonBreakout:'M15'
 };
 
-// Entry/SL/TP + $ risk-reward, using a user-configurable price-distance stop (= risk %) and a 1:2 risk:reward target,
-// with position size sized to risk that same % of the entered account balance.
-function tradeMath(direction, entry, balance, riskPctInput){
-  if((direction!=='buy' && direction!=='sell') || entry==null || isNaN(entry)) return null;
-  const riskPct = ((riskPctInput!=null && !isNaN(riskPctInput) && riskPctInput>0) ? riskPctInput : 1) / 100;   // stop distance = riskPct of entry price
-  const rr = 2;           // target = 1:2 risk:reward
-  const slDist = entry*riskPct;
-  const sl = direction==='buy' ? entry - slDist : entry + slDist;
-  const tpDist = slDist*rr;
-  const tp = direction==='buy' ? entry + tpDist : entry - tpDist;
-  let riskAmt=null, profitAmt=null, lots=null;
-  if(balance && balance>0){
-    riskAmt = balance*riskPct;      // risking riskPct of account, matching the SL distance
-    profitAmt = riskAmt*rr;
-    lots = riskAmt / (slDist*100);  // XAUUSD: 1 standard lot = 100 oz, so $ per lot per $1 move = 100
-  }
-  return {entry, sl, tp, slDist, tpDist, riskPct, rr, riskAmt, profitAmt, lots};
-}
+// Structure-based entry/SL/TP + position sizing now live in structureTradeLevels() and
+// sizePosition() above, keyed off BOS/CHoCH, Fair Value Gaps, and liquidity pools.
 
 function evaluateAllSetups(){
   const d1 = seriesCache['D1'], h4 = seriesCache['H4'], h1 = seriesCache['H1'], m15 = seriesCache['M15'], m5 = seriesCache['M5'];
@@ -1123,6 +1250,8 @@ function evaluateAllSetups(){
     const cached = seriesCache[tf];
     if(cached && setupResults[meta.id]){
       setupResults[meta.id].price = cached.series.closes[cached.series.closes.length-1];
+      const dir = setupResults[meta.id].direction;
+      setupResults[meta.id].levels = (dir==='buy' || dir==='sell') ? structureTradeLevels(dir, cached.series) : null;
     }
   });
 }
@@ -1136,21 +1265,26 @@ function renderSetupCards(){
     card.className = 'setup-card ' + (r.direction==='buy' ? 'buy' : r.direction==='sell' ? 'sell' : r.direction==='watch' ? 'watch' : '');
     const dirLabel = r.direction==='buy' ? 'BUY' : r.direction==='sell' ? 'SELL' : r.direction==='watch' ? 'WATCHING' : 'NO SIGNAL';
     let tradeHtml = '';
-    if(r.direction==='buy' || r.direction==='sell'){
-      const tm = tradeMath(r.direction, r.price, config.accountBalance, config.riskPct);
-      if(tm){
-        const rp = fmt(tm.riskPct*100, tm.riskPct*100 % 1 === 0 ? 0 : 1);
-        tradeHtml = `<div class="trade-math">
-          <div class="row"><span>${r.direction==='buy'?'Buy':'Sell'} at</span><b>${fmt(tm.entry)}</b></div>
-          <div class="row"><span>Stop loss (-${rp}% of price)</span><b>${fmt(tm.sl)}</b></div>
-          <div class="row"><span>Take profit (1:2)</span><b>${fmt(tm.tp)}</b></div>
-          ${tm.riskAmt!=null
-            ? `<div class="row"><span>$ risk at SL (${rp}% of balance)</span><b>$${fmt(tm.riskAmt,2)}</b></div>
-               <div class="row"><span>$ profit at TP</span><b>$${fmt(tm.profitAmt,2)}</b></div>
-               <div class="row"><span>Lot size (sized to ${rp}% balance risk)</span><b>${fmt(tm.lots,2)} lots</b></div>`
+    if((r.direction==='buy' || r.direction==='sell') && r.levels){
+      const lv = r.levels;
+      const sz = sizePosition(lv.slDist, lv.entry, lv.tp, config.accountBalance, config.riskPct);
+      const rp = fmt(sz.riskPct*100, sz.riskPct*100 % 1 === 0 ? 0 : 1);
+      const trendTxt = lv.trend==='up' ? 'Bullish' : lv.trend==='down' ? 'Bearish' : 'Unclear';
+      const evTxt = lv.lastEvent ? ` · Last ${lv.lastEvent.type} (${lv.lastEvent.direction}) @ ${fmt(lv.lastEvent.level)}` : '';
+      tradeHtml = `<div class="trade-math">
+          <div class="row"><span>${r.direction==='buy'?'Buy':'Sell'} at</span><b>${fmt(lv.entry)}</b></div>
+          <div class="row dim"><span>${lv.entryType}${lv.entryNote ? ' ' + lv.entryNote : ''}</span></div>
+          <div class="row"><span>Stop loss</span><b>${fmt(lv.sl)}</b></div>
+          <div class="row dim"><span>${lv.slType}</span></div>
+          <div class="row"><span>Take profit</span><b>${fmt(lv.tp)}</b></div>
+          <div class="row dim"><span>${lv.tpType}${lv.rr!=null ? ` · RR 1:${fmt(lv.rr,1)}` : ''}</span></div>
+          ${sz.riskAmt!=null
+            ? `<div class="row"><span>$ risk at SL (${rp}%)</span><b>$${fmt(sz.riskAmt,2)}</b></div>
+               <div class="row"><span>$ profit at TP</span><b>$${fmt(sz.profitAmt,2)}</b></div>
+               <div class="row"><span>Lot size</span><b>${fmt(sz.lots,2)} lots</b></div>`
             : `<div class="row dim"><span>Enter your account balance above to see $ risk/profit and lot size</span></div>`}
+          <div class="row dim"><span>Structure: ${trendTxt}${evTxt}</span></div>
         </div>`;
-      }
     }
     card.innerHTML = `<h4>${meta.name}</h4><div class="tf">Timeframe: ${meta.tf}</div>
       <span class="setup-dir ${r.direction==='none'?'none':r.direction}">${dirLabel}</span>
@@ -1198,6 +1332,7 @@ function updateMasterBanner(){
 }
 
 /* ---------- Consolidated trade plan (top-of-page summary across all eligible setups) ---------- */
+const TF_PRIORITY = ['H4','H1','M15','M5','D1'];
 function updateTradePlan(masterCls, buyCount, sellCount){
   const panel = document.getElementById('tradePlan');
   const countEl = document.getElementById('tpCount');
@@ -1208,6 +1343,7 @@ function updateTradePlan(masterCls, buyCount, sellCount){
   const lotsEl = document.getElementById('tpLots');
   const rpEl = document.getElementById('tpRiskProfit');
   const noteEl = document.getElementById('tpNote');
+  const rationaleEl = document.getElementById('tpRationale');
 
   const direction = masterCls==='buy' ? 'buy' : masterCls==='sell' ? 'sell' : null;
 
@@ -1216,43 +1352,51 @@ function updateTradePlan(masterCls, buyCount, sellCount){
     countEl.textContent = masterCls==='mixed' ? 'Buy and sell setups disagree — no single plan' : 'No eligible setups yet';
     dirEl.textContent = '—'; entryEl.textContent = '—'; slEl.textContent = '—';
     tpEl.textContent = '—'; lotsEl.textContent = '—'; rpEl.textContent = '—';
+    rationaleEl.textContent = '';
     return;
   }
 
-  const eligible = SETUPS_META
-    .map(m => setupResults[m.id])
-    .filter(r => r && r.direction===direction && r.price!=null && !isNaN(r.price));
+  const eligibleMeta = SETUPS_META.filter(m => {
+    const r = setupResults[m.id];
+    return r && r.direction===direction && r.levels;
+  });
 
   panel.className = direction;
   const n = direction==='buy' ? buyCount : sellCount;
-  countEl.textContent = `${n} of ${SETUPS_META.length} setups aligned — ${eligible.length} priced`;
+  countEl.textContent = `${n} of ${SETUPS_META.length} setups aligned — ${eligibleMeta.length} with structure levels`;
   dirEl.textContent = direction==='buy' ? 'BUY' : 'SELL';
 
-  if(eligible.length===0){
+  if(eligibleMeta.length===0){
     entryEl.textContent = '—'; slEl.textContent = '—'; tpEl.textContent = '—';
-    lotsEl.textContent = '—'; rpEl.textContent = '—';
+    lotsEl.textContent = '—'; rpEl.textContent = '—'; rationaleEl.textContent = '';
     noteEl.textContent = 'Waiting on live price data for the aligned setups.';
     return;
   }
 
-  const avgEntry = eligible.reduce((s,r)=>s+r.price, 0) / eligible.length;
-  const tm = tradeMath(direction, avgEntry, config.accountBalance, config.riskPct);
-  const rp = fmt(tm.riskPct*100, tm.riskPct*100 % 1 === 0 ? 0 : 1);
-  document.querySelector('#tradePlan .tp-stat:nth-child(3) .lbl').textContent = `Stop loss (-${rp}% of price)`;
-  document.querySelector('#tradePlan .tp-stat:nth-child(5) .lbl').textContent = `Lot size (${rp}% balance risk)`;
+  let chosen = null;
+  for(const tf of TF_PRIORITY){ chosen = eligibleMeta.find(m=>SETUP_PRIMARY_TF[m.id]===tf); if(chosen) break; }
+  if(!chosen) chosen = eligibleMeta[0];
 
-  entryEl.textContent = fmt(tm.entry);
-  slEl.textContent = fmt(tm.sl);
-  tpEl.textContent = fmt(tm.tp);
+  const lv = setupResults[chosen.id].levels;
+  const tf = SETUP_PRIMARY_TF[chosen.id];
+  const sz = sizePosition(lv.slDist, lv.entry, lv.tp, config.accountBalance, config.riskPct);
+  const rp = fmt(sz.riskPct*100, sz.riskPct*100 % 1 === 0 ? 0 : 1);
+  const trendTxt = lv.trend==='up' ? 'Bullish' : lv.trend==='down' ? 'Bearish' : 'Unclear';
+  const evTxt = lv.lastEvent ? ` · Last ${lv.lastEvent.type} (${lv.lastEvent.direction}) @ ${fmt(lv.lastEvent.level)}` : '';
 
-  if(tm.lots!=null){
-    lotsEl.textContent = `${fmt(tm.lots,2)} lots`;
-    rpEl.textContent = `-$${fmt(tm.riskAmt,2)} / +$${fmt(tm.profitAmt,2)}`;
-    noteEl.textContent = `Entry price averaged across ${eligible.length} eligible setup${eligible.length===1?'':'s'} signaling ${direction.toUpperCase()}. Stop = ${rp}% of price from entry, target = 1:2 reward. Lot size auto-calculated to risk ${rp}% of the account balance entered above (1 lot = 100oz).`;
+  entryEl.textContent = fmt(lv.entry);
+  slEl.textContent = fmt(lv.sl);
+  tpEl.textContent = fmt(lv.tp);
+  rationaleEl.textContent = `Using ${chosen.name} (${tf}) · Entry: ${lv.entryType}${lv.entryNote ? ' '+lv.entryNote : ''} · Stop: ${lv.slType} · Target: ${lv.tpType}${lv.rr!=null ? ` (RR 1:${fmt(lv.rr,1)})` : ''} · Structure: ${trendTxt}${evTxt}`;
+
+  if(sz.lots!=null){
+    lotsEl.textContent = `${fmt(sz.lots,2)} lots`;
+    rpEl.textContent = `-$${fmt(sz.riskAmt,2)} / +$${fmt(sz.profitAmt,2)}`;
+    noteEl.textContent = `Picks the highest-timeframe setup currently aligned with the majority direction (${eligibleMeta.length} eligible) and derives entry/SL/TP from its market structure. Lot size auto-calculated to risk ${rp}% of the account balance entered above (1 lot = 100oz).`;
   } else {
     lotsEl.textContent = '—';
     rpEl.textContent = '—';
-    noteEl.textContent = `Entry price averaged across ${eligible.length} eligible setup${eligible.length===1?'':'s'} signaling ${direction.toUpperCase()}. Enter your account balance above to see lot size and $ risk/profit.`;
+    noteEl.textContent = `Picks the highest-timeframe setup currently aligned with the majority direction (${eligibleMeta.length} eligible) and derives entry/SL/TP from its market structure. Enter your account balance above to see lot size and $ risk/profit.`;
   }
 }
 
