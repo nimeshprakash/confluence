@@ -47,6 +47,21 @@
   #masterBanner.sell .state{color:var(--sell);}
   #masterBanner.mixed .state{color:var(--gold);}
 
+  #tradePlan{border:1px solid var(--line); border-radius:10px; padding:18px 22px; margin-bottom:18px; background:var(--panel); transition:background .3s, border-color .3s;}
+  #tradePlan .tp-head{display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:10px; margin-bottom:14px;}
+  #tradePlan .tp-title{font-size:13px; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted);}
+  #tradePlan .tp-count{font-size:11px; color:var(--muted); font-family:var(--mono);}
+  #tradePlan.buy{border-color:var(--buy);}
+  #tradePlan.sell{border-color:var(--sell);}
+  .tp-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:14px;}
+  .tp-stat{background:var(--panel-2); border:1px solid var(--line); border-radius:8px; padding:10px 14px;}
+  .tp-stat .lbl{font-size:10px; text-transform:uppercase; letter-spacing:0.06em; color:var(--muted); font-family:var(--mono); margin-bottom:4px;}
+  .tp-stat .val{font-size:18px; font-weight:700; font-family:var(--mono); color:var(--text);}
+  #tradePlan.buy .tp-stat.dir .val{color:var(--buy);}
+  #tradePlan.sell .tp-stat.dir .val{color:var(--sell);}
+  .tp-stat.entry .val{color:var(--gold);}
+  .tp-note{margin-top:10px; font-size:11px; color:var(--muted); font-family:var(--mono);}
+
   .setup-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:14px; margin-bottom:8px;}
   .setup-card{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 16px;}
   .setup-card.buy{border-left:3px solid var(--buy);}
@@ -191,6 +206,22 @@
       <div class="state" id="masterState">NO ACTIVE SETUPS</div>
       <div class="sub" id="masterSub">Save an API key above to start checking all four setups for confluence.</div>
     </div>
+  </div>
+
+  <div id="tradePlan" class="neutral">
+    <div class="tp-head">
+      <span class="tp-title">Consolidated Trade Plan</span>
+      <span class="tp-count" id="tpCount">No eligible setups yet</span>
+    </div>
+    <div class="tp-grid">
+      <div class="tp-stat dir"><div class="lbl">Direction</div><div class="val" id="tpDirection">—</div></div>
+      <div class="tp-stat entry"><div class="lbl">Entry price</div><div class="val" id="tpEntry">—</div></div>
+      <div class="tp-stat"><div class="lbl">Stop loss</div><div class="val" id="tpSL">—</div></div>
+      <div class="tp-stat"><div class="lbl">Take profit</div><div class="val" id="tpTP">—</div></div>
+      <div class="tp-stat"><div class="lbl">Lot size</div><div class="val" id="tpLots">—</div></div>
+      <div class="tp-stat"><div class="lbl">Risk / Profit</div><div class="val" id="tpRiskProfit">—</div></div>
+    </div>
+    <div class="tp-note" id="tpNote">Averages the entry price across every setup currently aligned in the majority direction, then applies the same 1% stop / 1:2 reward formula used on the cards below. Lot size is sized to risk 1% of the account balance entered above.</div>
   </div>
 
   <div class="section-title">Setup 1 — Trend Pullback (5-timeframe confluence)</div>
@@ -1158,6 +1189,63 @@ function updateMasterBanner(){
     fireAlert(cls==='sell' ? 'sell' : 'buy', text);
   }
   prevMasterSignature = signature;
+  updateTradePlan(cls, buyNames.length, sellNames.length);
+}
+
+/* ---------- Consolidated trade plan (top-of-page summary across all eligible setups) ---------- */
+function updateTradePlan(masterCls, buyCount, sellCount){
+  const panel = document.getElementById('tradePlan');
+  const countEl = document.getElementById('tpCount');
+  const dirEl = document.getElementById('tpDirection');
+  const entryEl = document.getElementById('tpEntry');
+  const slEl = document.getElementById('tpSL');
+  const tpEl = document.getElementById('tpTP');
+  const lotsEl = document.getElementById('tpLots');
+  const rpEl = document.getElementById('tpRiskProfit');
+  const noteEl = document.getElementById('tpNote');
+
+  const direction = masterCls==='buy' ? 'buy' : masterCls==='sell' ? 'sell' : null;
+
+  if(!direction){
+    panel.className = 'neutral';
+    countEl.textContent = masterCls==='mixed' ? 'Buy and sell setups disagree — no single plan' : 'No eligible setups yet';
+    dirEl.textContent = '—'; entryEl.textContent = '—'; slEl.textContent = '—';
+    tpEl.textContent = '—'; lotsEl.textContent = '—'; rpEl.textContent = '—';
+    return;
+  }
+
+  const eligible = SETUPS_META
+    .map(m => setupResults[m.id])
+    .filter(r => r && r.direction===direction && r.price!=null && !isNaN(r.price));
+
+  panel.className = direction;
+  const n = direction==='buy' ? buyCount : sellCount;
+  countEl.textContent = `${n} of ${SETUPS_META.length} setups aligned — ${eligible.length} priced`;
+  dirEl.textContent = direction==='buy' ? 'BUY' : 'SELL';
+
+  if(eligible.length===0){
+    entryEl.textContent = '—'; slEl.textContent = '—'; tpEl.textContent = '—';
+    lotsEl.textContent = '—'; rpEl.textContent = '—';
+    noteEl.textContent = 'Waiting on live price data for the aligned setups.';
+    return;
+  }
+
+  const avgEntry = eligible.reduce((s,r)=>s+r.price, 0) / eligible.length;
+  const tm = tradeMath(direction, avgEntry, config.accountBalance);
+
+  entryEl.textContent = fmt(tm.entry);
+  slEl.textContent = fmt(tm.sl);
+  tpEl.textContent = fmt(tm.tp);
+
+  if(tm.lots!=null){
+    lotsEl.textContent = `${fmt(tm.lots,2)} lots`;
+    rpEl.textContent = `-$${fmt(tm.riskAmt,2)} / +$${fmt(tm.profitAmt,2)}`;
+    noteEl.textContent = `Entry price averaged across ${eligible.length} eligible setup${eligible.length===1?'':'s'} signaling ${direction.toUpperCase()}. Stop = 1% from entry, target = 1:2 reward. Lot size sized to risk 1% of the account balance entered above (1 lot = 100oz).`;
+  } else {
+    lotsEl.textContent = '—';
+    rpEl.textContent = '—';
+    noteEl.textContent = `Entry price averaged across ${eligible.length} eligible setup${eligible.length===1?'':'s'} signaling ${direction.toUpperCase()}. Enter your account balance above to see lot size and $ risk/profit.`;
+  }
 }
 
 function setStatus(msg, isErr){
@@ -1385,6 +1473,7 @@ document.getElementById('saveSettings').addEventListener('click', async ()=>{
   applyAutoModeUI();
   applyStateToDOM();
   renderSetupCards();
+  updateMasterBanner();
   if(refreshTimer) clearInterval(refreshTimer);
   if(autoMode){
     runAutoCycle();
@@ -1396,6 +1485,7 @@ document.getElementById('balanceInput').addEventListener('input', ()=>{
   config.accountBalance = isNaN(v) ? 0 : Math.max(0, v);
   saveConfig();
   renderSetupCards();
+  updateMasterBanner();
 });
 document.getElementById('fetchNow').addEventListener('click', ()=>{ if(config.apiKey) runAutoCycle(); else setStatus('Add an API key first.', true); });
 document.getElementById('stopAuto').addEventListener('click', ()=>{
