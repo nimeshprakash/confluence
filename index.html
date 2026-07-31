@@ -716,6 +716,119 @@ function detect9EmaScalp(m5){
   return {direction:'none', note:'No M5 EMA9 scalp setup active right now'};
 }
 
+/* ---------- 5 additional named setups (deduped against the 15 above) ---------- */
+
+// 16. EMA Ribbon Breakout: EMA8/13/21 crossover cascade + price/EMA50 + RSI/CCI confirmation (M15)
+function detectEmaRibbonBreakout(m15){
+  if(!m15) return {direction:'none', note:'Waiting for M15 data'};
+  const ind=m15.ind, s=m15.series, last=s.closes.length-1;
+  let bullCross8_13=false, bullCross13_21=false, bearCross8_13=false, bearCross13_21=false;
+  for(let i=Math.max(1,last-5); i<=last; i++){
+    if(seriesCrossedAbove(ind.ema8, ind.ema13, i)) bullCross8_13 = true;
+    if(seriesCrossedAbove(ind.ema13, ind.ema21, i)) bullCross13_21 = true;
+    if(seriesCrossedBelow(ind.ema8, ind.ema13, i)) bearCross8_13 = true;
+    if(seriesCrossedBelow(ind.ema13, ind.ema21, i)) bearCross13_21 = true;
+  }
+  const aboveEma50 = s.closes[last] > ind.ema50[last], belowEma50 = s.closes[last] < ind.ema50[last];
+  const rsiV=ind.rsi21[last], cciV=ind.cci81[last];
+  if(bullCross8_13 && bullCross13_21 && aboveEma50 && rsiV>60 && cciV>100) return {direction:'buy', note:'EMA8/13/21 ribbon crossed bullish, price above EMA50, RSI>60, CCI>100'};
+  if(bearCross8_13 && bearCross13_21 && belowEma50 && rsiV<40 && cciV<-100) return {direction:'sell', note:'EMA8/13/21 ribbon crossed bearish, price below EMA50, RSI<40, CCI<-100'};
+  if(bullCross8_13 || bullCross13_21) return {direction:'watch', note:'Ribbon starting to turn bullish — waiting for full confirmation'};
+  if(bearCross8_13 || bearCross13_21) return {direction:'watch', note:'Ribbon starting to turn bearish — waiting for full confirmation'};
+  return {direction:'none', note:'No recent EMA ribbon crossover on M15'};
+}
+
+// 17. RSI + CCI Extreme Reversal: deep extremes at EMA100/200 with a confirming candle (H1)
+function detectRsiCciExtremeReversal(h1){
+  if(!h1) return {direction:'none', note:'Waiting for H1 data'};
+  const ind=h1.ind, s=h1.series, last=s.closes.length-1;
+  const rsiV=ind.rsi21[last], cciV=ind.cci81[last];
+  const touchLevel = touchesEma(s.highs, s.lows, ind.ema100, 2) || touchesEma(s.highs, s.lows, ind.ema200, 2);
+  const bullCandle = s.closes[last]>s.opens[last], bearCandle = s.closes[last]<s.opens[last];
+  if(rsiV<30 && cciV<-250 && touchLevel && bullCandle) return {direction:'buy', note:`RSI ${fmt(rsiV,1)} and CCI ${fmt(cciV,1)} both at extreme lows at EMA100/200, bullish candle`};
+  if(rsiV>70 && cciV>250 && touchLevel && bearCandle) return {direction:'sell', note:`RSI ${fmt(rsiV,1)} and CCI ${fmt(cciV,1)} both at extreme highs at EMA100/200, bearish candle`};
+  if(rsiV<30 && cciV<-250) return {direction:'watch', note:'RSI/CCI extremely oversold — waiting for EMA100/200 touch + bullish candle'};
+  if(rsiV>70 && cciV>250) return {direction:'watch', note:'RSI/CCI extremely overbought — waiting for EMA100/200 touch + bearish candle'};
+  return {direction:'none', note:'No RSI/CCI extreme reading on H1'};
+}
+
+// 18. RSI Failure Swing: RSI exits an extreme, price makes a higher low / lower high, CCI confirms (H1)
+function detectRsiFailureSwing(h1){
+  if(!h1) return {direction:'none', note:'Waiting for H1 data'};
+  const ind=h1.ind, s=h1.series, last=s.closes.length-1;
+  const lb=Math.max(0,last-15);
+  if(last<2) return {direction:'none', note:'Not enough H1 history yet'};
+  let dippedBelow30=false, spikedAbove70=false;
+  for(let i=lb; i<last; i++){
+    if(ind.rsi21[i]!=null && ind.rsi21[i]<30) dippedBelow30=true;
+    if(ind.rsi21[i]!=null && ind.rsi21[i]>70) spikedAbove70=true;
+  }
+  const rsiBackAbove30 = ind.rsi21[last]!=null && ind.rsi21[last]>30;
+  const rsiBackBelow70 = ind.rsi21[last]!=null && ind.rsi21[last]<70;
+  const pivots = findPivots(s.highs.slice(lb), s.lows.slice(lb), 1).map(p=>({...p, index:p.index+lb}));
+  const lowPivots = pivots.filter(p=>p.type==='low').slice(-2);
+  const highPivots = pivots.filter(p=>p.type==='high').slice(-2);
+  const higherLow = lowPivots.length===2 && lowPivots[1].price > lowPivots[0].price;
+  const lowerHigh = highPivots.length===2 && highPivots[1].price < highPivots[0].price;
+  const cciUp = crossedAbove(ind.cci81, last, 0), cciDown = crossedBelow(ind.cci81, last, 0);
+  const trendBull = ind.ema21[last] > ind.ema50[last], trendBear = ind.ema21[last] < ind.ema50[last];
+  if(dippedBelow30 && rsiBackAbove30 && higherLow && cciUp && trendBull) return {direction:'buy', note:'RSI failure swing: dipped below 30, higher low formed, CCI crossed above 0, EMA21>EMA50'};
+  if(spikedAbove70 && rsiBackBelow70 && lowerHigh && cciDown && trendBear) return {direction:'sell', note:'RSI failure swing: spiked above 70, lower high formed, CCI crossed below 0, EMA21<EMA50'};
+  if(dippedBelow30 && rsiBackAbove30) return {direction:'watch', note:'RSI recovering from oversold — waiting on higher low + CCI cross'};
+  if(spikedAbove70 && rsiBackBelow70) return {direction:'watch', note:'RSI pulling back from overbought — waiting on lower high + CCI cross'};
+  return {direction:'none', note:'No RSI failure swing forming on H1'};
+}
+
+// 19. CCI Zero-Line Strategy: trend continuation trigger off the CCI zero line (H1)
+function detectCciZeroLine(h1){
+  if(!h1) return {direction:'none', note:'Waiting for H1 data'};
+  const ind=h1.ind, s=h1.series, last=s.closes.length-1;
+  const trendBull = ind.ema21[last] > ind.ema50[last], trendBear = ind.ema21[last] < ind.ema50[last];
+  let dippedNeg=false, spikedPos=false;
+  for(let i=Math.max(0,last-6); i<last; i++){
+    if(ind.cci81[i]!=null && ind.cci81[i]<0) dippedNeg=true;
+    if(ind.cci81[i]!=null && ind.cci81[i]>0) spikedPos=true;
+  }
+  const crossUp = crossedAbove(ind.cci81, last, 0), crossDown = crossedBelow(ind.cci81, last, 0);
+  const rsiV=ind.rsi21[last];
+  if(trendBull && dippedNeg && crossUp && rsiV>50) return {direction:'buy', note:'Uptrend (EMA21>EMA50), CCI dipped below 0 and crossed back above, RSI>50'};
+  if(trendBear && spikedPos && crossDown && rsiV<50) return {direction:'sell', note:'Downtrend (EMA21<EMA50), CCI spiked above 0 and crossed back below, RSI<50'};
+  return {direction:'none', note:'No CCI zero-line continuation trigger on H1'};
+}
+
+// 20. London Breakout Filter: Asian-range breakout in the London-open window (M15, UTC session timing)
+function detectLondonBreakout(m15){
+  if(!m15) return {direction:'none', note:'Waiting for M15 data'};
+  const ind=m15.ind, s=m15.series, last=s.closes.length-1;
+  const t = s.times[last];
+  if(!t) return {direction:'none', note:'No timestamp data available for session timing'};
+  const d = new Date(t.replace(' ','T')+'Z');
+  const hourUTC = d.getUTCHours(), minUTC = d.getUTCMinutes();
+  const inLondonWindow = (hourUTC===8 && minUTC>=30) || hourUTC===9;
+  if(!inLondonWindow) return {direction:'none', note:'Outside the London-open breakout window (~08:30–10:00 UTC)'};
+  const dayStr = t.slice(0,10);
+  let asianHigh=-Infinity, asianLow=Infinity, found=false;
+  for(let i=0;i<s.times.length;i++){
+    const ti = s.times[i];
+    if(!ti || !ti.startsWith(dayStr)) continue;
+    const di = new Date(ti.replace(' ','T')+'Z');
+    if(di.getUTCHours()>=0 && di.getUTCHours()<7){
+      asianHigh = Math.max(asianHigh, s.highs[i]);
+      asianLow = Math.min(asianLow, s.lows[i]);
+      found = true;
+    }
+  }
+  if(!found) return {direction:'none', note:"Could not identify today's Asian session range yet"};
+  const c = s.closes[last];
+  const e8=ind.ema8[last], e13=ind.ema13[last], e21=ind.ema21[last], e50=ind.ema50[last], e100=ind.ema100[last], e200=ind.ema200[last];
+  const ribbonBull = e8>e13 && e13>e21 && e21>e50 && e50>e100 && e100>e200;
+  const ribbonBear = e8<e13 && e13<e21 && e21<e50 && e50<e100 && e100<e200;
+  const rsiV=ind.rsi21[last], cciV=ind.cci81[last];
+  if(c>asianHigh && ribbonBull && rsiV>55 && cciV>100) return {direction:'buy', note:`Broke above Asian range high ${fmt(asianHigh)} in the London window, ribbon bullish, RSI ${fmt(rsiV,1)}, CCI ${fmt(cciV,1)}`};
+  if(c<asianLow && ribbonBear && rsiV<45 && cciV<-100) return {direction:'sell', note:`Broke below Asian range low ${fmt(asianLow)} in the London window, ribbon bearish, RSI ${fmt(rsiV,1)}, CCI ${fmt(cciV,1)}`};
+  return {direction:'none', note:`In London window — Asian range ${fmt(asianLow)}–${fmt(asianHigh)}, price ${fmt(c)}, no confirmed breakout yet`};
+}
+
 
 async function fetchSeries(tf){
   const interval = TF_TD_INTERVAL[tf];
@@ -755,6 +868,8 @@ function strongCandle(o,h,l,c,bullish){
   const dirOk = bullish ? c>o : c<o;
   return dirOk && (body/range) > 0.6;
 }
+function seriesCrossedAbove(a, b, i){ return i>0 && a[i-1]!=null && b[i-1]!=null && a[i]!=null && b[i]!=null && a[i-1] <= b[i-1] && a[i] > b[i]; }
+function seriesCrossedBelow(a, b, i){ return i>0 && a[i-1]!=null && b[i-1]!=null && a[i]!=null && b[i]!=null && a[i-1] >= b[i-1] && a[i] < b[i]; }
 
 /* ---------- Evaluate checklist from live data ---------- */
 function evaluateSide(side, tf, series, ind){
@@ -897,7 +1012,12 @@ const SETUPS_META = [
   {id:'fakeBreakout',    name:'12. Fake Breakout Setup',           tf:'H1'},
   {id:'liquiditySweep',  name:'13. Liquidity Sweep',               tf:'M15'},
   {id:'doubleTopBottom', name:'14. Double Bottom / Double Top',    tf:'H1'},
-  {id:'emaScalp9',       name:'15. 9 EMA Scalping',                tf:'M5'}
+  {id:'emaScalp9',       name:'15. 9 EMA Scalping',                tf:'M5'},
+  {id:'emaRibbonBreakout',        name:'16. EMA Ribbon Breakout',            tf:'M15'},
+  {id:'rsiCciExtremeReversal',    name:'17. RSI + CCI Extreme Reversal',     tf:'H1'},
+  {id:'rsiFailureSwing',          name:'18. RSI Failure Swing',              tf:'H1'},
+  {id:'cciZeroLine',              name:'19. CCI Zero-Line Strategy',         tf:'H1'},
+  {id:'londonBreakout',           name:'20. London Breakout Filter',         tf:'M15'}
 ];
 let setupResults = {}; // id -> {direction, note}
 
@@ -918,6 +1038,11 @@ function evaluateAllSetups(){
   setupResults.liquiditySweep  = m15 ? detectLiquiditySweep(m15)              : {direction:'none', note:'Waiting for M15 data'};
   setupResults.doubleTopBottom = h1  ? detectDoubleTopBottom(h1)              : {direction:'none', note:'Waiting for H1 data'};
   setupResults.emaScalp9       = m5  ? detect9EmaScalp(m5)                    : {direction:'none', note:'Waiting for M5 data'};
+  setupResults.emaRibbonBreakout     = m15 ? detectEmaRibbonBreakout(m15)           : {direction:'none', note:'Waiting for M15 data'};
+  setupResults.rsiCciExtremeReversal = h1  ? detectRsiCciExtremeReversal(h1)        : {direction:'none', note:'Waiting for H1 data'};
+  setupResults.rsiFailureSwing       = h1  ? detectRsiFailureSwing(h1)              : {direction:'none', note:'Waiting for H1 data'};
+  setupResults.cciZeroLine           = h1  ? detectCciZeroLine(h1)                  : {direction:'none', note:'Waiting for H1 data'};
+  setupResults.londonBreakout        = m15 ? detectLondonBreakout(m15)              : {direction:'none', note:'Waiting for M15 data'};
 }
 
 function renderSetupCards(){
