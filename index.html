@@ -215,7 +215,7 @@
       <div class="tp-stat"><div class="lbl">Probable exit target</div><div class="val" id="tpTP">—</div></div>
     </div>
     <div class="tp-note" id="tpRationale" style="margin-bottom:4px;"></div>
-    <div class="tp-note" id="tpNote">Picks the highest-timeframe setup currently aligned with the majority direction and derives entry/exit pricing from its market structure: BOS/CHoCH swing breaks, unmitigated Fair Value Gaps, and liquidity-pool clusters (equal highs/lows).</div>
+    <div class="tp-note" id="tpNote">Picks the highest-timeframe setup currently aligned with the majority direction. Entry and exit pricing are always derived from M15 (entry: FVGs, market price) and H1 (structure: BOS/CHoCH swing breaks and liquidity-pool clusters), regardless of which timeframe the setup's own signal fires on.</div>
   </div>
 
   <div class="section-title">Setup 1 — Trend Pullback (5-timeframe confluence)</div>
@@ -252,7 +252,7 @@
     <br><br>
     <b>What's automatic vs. what isn't:</b> items tagged <span class="badge auto">AUTO</span> are computed every refresh cycle straight from live OHLC data (EMA stack order, RSI(21), CCI(81), EMA pullback proximity, candle patterns, market-structure and overhead-resistance/support heuristics). Market structure and resistance/support are estimated from recent swing pivots — verify visually if a call looks borderline. <b>Enter</b> and <b>Target</b> stay as manual checkboxes with a computed price suggestion next to them, since those are execution decisions, not yes/no conditions. This tool gives you information to make your own trading decision — it isn't financial advice.
     <br><br>
-    <b>Entry &amp; exit pricing on each card:</b> for any setup currently signaling BUY or SELL, entry and a probable exit target are derived from market structure on that setup's timeframe rather than a fixed % distance. <b>Entry</b> uses the nearest unmitigated Fair Value Gap (FVG) in the trade's direction if one sits within 2% of price, otherwise the current market price. The <b>exit target</b> is the next opposing liquidity pool (cluster of equal highs/lows) or swing extreme that price is likely to reach in the trade's favor; if no such level clears a reasonable distance from entry, it falls back to a projected move sized off the most recent structural swing. Each card also shows the prevailing structure trend and the most recent BOS (Break of Structure, trend continuation) or CHoCH (Change of Character, first break against the trend). This is a heuristic read of where price may probably reach, not a recommendation — always confirm structure visually before acting on it.
+    <b>Entry &amp; exit pricing on each card:</b> for any of the 20 setups currently signaling BUY or SELL, entry and a probable exit target are derived from market structure — always read off <b>M15 and H1</b>, regardless of which timeframe the setup's own signal fires on. <b>Entry</b> uses the nearest unmitigated Fair Value Gap (FVG) on M15 in the trade's direction if one sits within 2% of price, otherwise the current M15 market price. The <b>exit target</b> is the next opposing H1 liquidity pool (cluster of equal highs/lows) or H1 swing extreme that price is likely to reach in the trade's favor; if no such level clears a reasonable distance from entry, it falls back to a projected move sized off the most recent H1 structural swing. Each card also shows the prevailing H1 structure trend and the most recent BOS (Break of Structure, trend continuation) or CHoCH (Change of Character, first break against the trend). This is a heuristic read of where price may probably reach, not a recommendation — always confirm structure visually before acting on it.
   </div>
 
   <div class="section-title">Chart for confirmation &amp; identification</div>
@@ -471,18 +471,21 @@ function detectLiquidityPools(series, tolPct){
   };
 }
 
-// Entry & probable exit target derived from structure: entry at an unmitigated FVG retracement
-// (or market if none nearby). A structural invalidation level (beyond the protecting swing/
-// liquidity pool) is computed internally purely to size a sensible exit projection — it is not
-// shown to the user. Exit target is the next opposing liquidity pool or swing extreme in profit,
-// falling back to a projected move sized off that internal swing distance if none qualifies.
-function structureTradeLevels(direction, series){
-  const n = series.closes.length, last = n-1;
-  const price = series.closes[last];
+// Entry & probable exit target derived from market structure, fixed to two timeframes:
+// M15 supplies the entry (finer-grained FVG retracement, or current market price if none
+// nearby) while H1 supplies the structure — swing pivots, liquidity pools, and trend/BOS/CHoCH
+// read — since higher-timeframe levels make more meaningful exit targets. A structural
+// invalidation level (beyond the protecting H1 swing/liquidity pool) is computed internally
+// purely to size a sensible exit projection when no clean opposing level exists — it is not
+// shown to the user. Exit target is the next opposing H1 liquidity pool or swing extreme in
+// profit, falling back to a projected move sized off that internal swing distance otherwise.
+function structureTradeLevels(direction, m15series, h1series){
+  const n = m15series.closes.length, last = n-1;
+  const price = m15series.closes[last];
   const buy = direction==='buy';
-  const struct = structureEvents(series);
-  const fvgs = detectFVGs(series);
-  const pools = detectLiquidityPools(series);
+  const struct = structureEvents(h1series);
+  const fvgs = detectFVGs(m15series);
+  const pools = detectLiquidityPools(h1series);
   const pivots = struct.pivots;
 
   let entry = price, entryType = 'Market (no fresh FVG nearby)', entryNote = '';
@@ -563,28 +566,6 @@ function rejection(o,h,l,c, bullish){
 }
 function fmt(n, d){ return n==null || isNaN(n) ? '—' : n.toFixed(d==null?2:d); }
 
-function bollinger(closes, period, mult){
-  const mid = new Array(closes.length).fill(null);
-  const upper = new Array(closes.length).fill(null);
-  const lower = new Array(closes.length).fill(null);
-  const bw = new Array(closes.length).fill(null);
-  for(let i=period-1;i<closes.length;i++){
-    const slice = closes.slice(i-period+1, i+1);
-    const sma = slice.reduce((a,b)=>a+b,0)/period;
-    const variance = slice.reduce((a,b)=>a+Math.pow(b-sma,2),0)/period;
-    const sd = Math.sqrt(variance);
-    mid[i] = sma; upper[i] = sma+mult*sd; lower[i] = sma-mult*sd;
-    bw[i] = sma===0 ? 0 : (upper[i]-lower[i])/sma;
-  }
-  return {mid, upper, lower, bw};
-}
-function percentileRank(arr, value){
-  const clean = arr.filter(v=>v!=null);
-  if(clean.length===0) return 0.5;
-  const below = clean.filter(v=>v<=value).length;
-  return below/clean.length;
-}
-
 /* ---------- Additional setup detectors ---------- */
 function detectBreakoutRetest(series){
   const highs=series.highs, lows=series.lows, closes=series.closes;
@@ -634,23 +615,6 @@ function detectDivergence(series, rsiArr){
     }
   }
   return {direction:'none', note:'No RSI divergence against recent swing points'};
-}
-function detectSqueeze(series){
-  const closes = series.closes;
-  const bb = bollinger(closes, 20, 2);
-  const last = closes.length-1;
-  const bwHistory = bb.bw.slice(Math.max(0,last-100), last+1);
-  const pct = percentileRank(bwHistory, bb.bw[last]);
-  const squeezeNow = pct <= 0.2;
-  let squeezeRecent = false;
-  for(let i=Math.max(0,last-5); i<=last; i++){
-    if(bb.bw[i]!=null && percentileRank(bb.bw.slice(Math.max(0,i-100), i+1), bb.bw[i]) <= 0.2){ squeezeRecent = true; break; }
-  }
-  const price = closes[last];
-  if(price > bb.upper[last] && squeezeRecent) return {direction:'buy', note:`Volatility squeeze released upward — close ${fmt(price)} above upper band ${fmt(bb.upper[last])}`};
-  if(price < bb.lower[last] && squeezeRecent) return {direction:'sell', note:`Volatility squeeze released downward — close ${fmt(price)} below lower band ${fmt(bb.lower[last])}`};
-  if(squeezeNow) return {direction:'watch', note:`Bands are tight (bandwidth in bottom ${Math.round(pct*100)}% of last 100 bars) — watching for a breakout`};
-  return {direction:'none', note:`Bandwidth normal, no squeeze detected`};
 }
 
 /* ---------- 15 named setup detectors ---------- */
@@ -1144,20 +1108,6 @@ async function runAutoCycle(){
   if(errCount===0) setStatus(`Last updated ${new Date().toLocaleTimeString()} · auto-checking every ${config.refreshMinutes} min`, false);
 }
 
-/* ---------- Setup 1 status (derived from the 5-TF checklist) ---------- */
-function setup1Direction(){
-  let dir = 'none', note = 'Waiting for D1–M15 alignment';
-  ['buy','sell'].forEach(side=>{
-    let requiredComplete = true;
-    TFS.forEach(tf=>{ if(tf!=='M5' && !tfComplete(side,tf).complete) requiredComplete = false; });
-    if(requiredComplete){
-      dir = side;
-      note = tfComplete(side,'M5').complete ? 'All 5 timeframes aligned — entry trigger confirmed' : 'D1–M15 aligned — watching M5 for trigger';
-    }
-  });
-  return {direction:dir, note};
-}
-
 const SETUPS_META = [
   {id:'trendPullback',   name:'1. Trend Pullback (Best for Gold)', tf:'H1 → M15'},
   {id:'emaAlignment',    name:'2. EMA Alignment Setup',            tf:'H1'},
@@ -1219,12 +1169,11 @@ function evaluateAllSetups(){
   setupResults.londonBreakout        = m15 ? detectLondonBreakout(m15)              : {direction:'none', note:'Waiting for M15 data'};
 
   SETUPS_META.forEach(meta=>{
-    const tf = SETUP_PRIMARY_TF[meta.id];
-    const cached = seriesCache[tf];
-    if(cached && setupResults[meta.id]){
-      setupResults[meta.id].price = cached.series.closes[cached.series.closes.length-1];
-      const dir = setupResults[meta.id].direction;
-      setupResults[meta.id].levels = (dir==='buy' || dir==='sell') ? structureTradeLevels(dir, cached.series) : null;
+    const r = setupResults[meta.id];
+    if(r && (r.direction==='buy' || r.direction==='sell') && m15 && h1){
+      r.levels = structureTradeLevels(r.direction, m15.series, h1.series);
+    } else if(r){
+      r.levels = null;
     }
   });
 }
@@ -1344,7 +1293,7 @@ function updateTradePlan(masterCls, buyCount, sellCount){
   entryEl.textContent = fmt(lv.entry);
   tpEl.textContent = fmt(lv.tp);
   rationaleEl.textContent = `Using ${chosen.name} (${tf}) · Entry: ${lv.entryType}${lv.entryNote ? ' '+lv.entryNote : ''} · Target: ${lv.tpType} · Structure: ${trendTxt}${evTxt}`;
-  noteEl.textContent = `Picks the highest-timeframe setup currently aligned with the majority direction (${eligibleMeta.length} eligible) and derives entry/exit pricing from its market structure.`;
+  noteEl.textContent = `Picks the highest-timeframe setup currently aligned with the majority direction (${eligibleMeta.length} eligible). Entry and exit pricing are always read off M15 (entry) and H1 (structure/target), regardless of the setup's own signal timeframe.`;
 }
 
 function setStatus(msg, isErr){
