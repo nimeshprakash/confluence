@@ -375,6 +375,25 @@ function cci(highs, lows, closes, period){
   }
   return out;
 }
+function atrWilder(highs, lows, closes, period){
+  const n = closes.length;
+  const tr = new Array(n).fill(null);
+  for(let i=0;i<n;i++){
+    if(i===0){ tr[i] = highs[i]-lows[i]; continue; }
+    tr[i] = Math.max(highs[i]-lows[i], Math.abs(highs[i]-closes[i-1]), Math.abs(lows[i]-closes[i-1]));
+  }
+  const out = new Array(n).fill(null);
+  if(n <= period) return out;
+  let sum=0;
+  for(let i=1;i<=period;i++) sum += tr[i];
+  let prev = sum/period;
+  out[period] = prev;
+  for(let i=period+1;i<n;i++){
+    prev = (prev*(period-1)+tr[i])/period;
+    out[i] = prev;
+  }
+  return out;
+}
 function findPivots(highs, lows, lb){
   const pivots=[];
   for(let i=lb;i<highs.length-lb;i++){
@@ -882,8 +901,44 @@ function computeIndicators(series){
   return {
     ema8: ema(series.closes,8), ema9: ema(series.closes,9), ema13: ema(series.closes,13), ema21: ema(series.closes,21),
     ema50: ema(series.closes,50), ema100: ema(series.closes,100), ema200: ema(series.closes,200),
-    rsi21: rsiWilder(series.closes,21), cci81: cci(series.highs, series.lows, series.closes, 81)
+    rsi21: rsiWilder(series.closes,21), cci81: cci(series.highs, series.lows, series.closes, 81),
+    atr14: atrWilder(series.highs, series.lows, series.closes, 14)
   };
+}
+
+/* ---------- Volatility filter (ATR) ---------- */
+// Suppresses signals when ATR is too small (relative to price) for the projected target to be
+// realistically reachable, and flags signals where price has already traveled a large multiple
+// of ATR away from its recent swing origin — i.e. a move that's likely already extended, so
+// entering now is more of a chase than a fresh setup.
+function assessVolatility(direction, cached){
+  if(!cached) return null;
+  const {series, ind} = cached;
+  const last = series.closes.length-1;
+  const atr = ind.atr14[last];
+  const close = series.closes[last];
+  if(atr==null || !close){
+    return {atr:null, atrPct:null, suppressed:false, extended:false, note:'ATR still warming up (not enough bars yet)'};
+  }
+  const atrPct = (atr/close)*100;
+  const minPct = (config.atrMinPct!=null && !isNaN(config.atrMinPct)) ? config.atrMinPct : 0.03;
+  const suppressed = atrPct < minPct;
+
+  const lb = Math.min(20, last+1);
+  const recentHigh = Math.max(...series.highs.slice(last-lb+1, last+1));
+  const recentLow = Math.min(...series.lows.slice(last-lb+1, last+1));
+  const buy = direction==='buy';
+  const origin = buy ? recentLow : recentHigh;
+  const traveled = Math.abs(close - origin);
+  const extMult = (config.atrExtendedMult!=null && !isNaN(config.atrExtendedMult)) ? config.atrExtendedMult : 2.5;
+  const atrMultiple = atr>0 ? traveled/atr : 0;
+  const extended = atr>0 && atrMultiple > extMult;
+
+  let note = `ATR(14) ${fmt(atr)} (${fmt(atrPct,2)}% of price)`;
+  if(suppressed) note += ` — below ${fmt(minPct,2)}% floor, too quiet to reliably reach target`;
+  if(extended) note += ` — already ${atrMultiple.toFixed(1)}× ATR from swing origin, likely an extended/late entry`;
+
+  return {atr, atrPct, suppressed, extended, atrMultiple, note};
 }
 
 /* ---------- Small signal-logic helpers for the 15 named setups below ---------- */
@@ -1073,20 +1128,141 @@ function evaluateAllSetups(){
     const r = setupResults[meta.id];
     if(r && cached && (r.direction==='buy' || r.direction==='sell')){
       r.levels = setupTradeLevels(r.direction, cached.series);
+      r.volatility = assessVolatility(r.direction, cached);
+      if(r.volatility && r.volatility.suppressed){
+        r.rawDirection = r.direction;
+        r.direction = 'watch';
+        r.note = `${r.note} — volatility filter: ${r.volatility.note}`;
+      }
     } else if(r){
       r.levels = null;
+      r.volatility = null;
     }
   });
 
   // Sound + notification alert whenever an individual setup card newly flips to BUY or SELL
+  // (signals suppressed by the ATR filter above are never buy/sell here, so they neither
+  // alert nor get logged to the performance tracker).
   SETUPS_META.forEach(meta=>{
     const dir = (setupResults[meta.id] || {}).direction;
     const prev = prevSetupDirections[meta.id];
     if((dir==='buy' || dir==='sell') && dir !== prev){
       fireAlert(dir, `${meta.name}: ${dir.toUpperCase()}`);
+      logNewSignal(meta, dir, seriesCache[SETUP_PRIMARY_TF[meta.id]]);
     }
     prevSetupDirections[meta.id] = dir;
   });
+}
+
+/* ---------- Historical performance tracking per setup ---------- */
+// Every fresh BUY/SELL signal gets logged (entry price, entry bar index on its own timeframe,
+// projected target). On each refresh we check open trades against new bars; once the configured
+// lookahead has elapsed the trade is scored (favorable move %, and whether the target was
+// touched). This is what lets the console show a running win-rate/avg-move per setup instead of
+// treating all 20 rules as equally reliable.
+let perfLog = { trades: [] };
+async function savePerf(){ try{ await window.storage.set('xauusd-perf-log', JSON.stringify(perfLog), false); }catch(e){} }
+
+function logNewSignal(meta, dir, cached){
+  if(!cached) return;
+  const series = cached.series;
+  const idx = series.closes.length-1;
+  const r = setupResults[meta.id];
+  const tp = (r && r.levels) ? r.levels.tp : null;
+  perfLog.trades.push({
+    tid: Date.now()+'-'+meta.id+'-'+Math.random().toString(36).slice(2,7),
+    setupId: meta.id,
+    direction: dir,
+    tf: SETUP_PRIMARY_TF[meta.id],
+    entryPrice: series.closes[idx],
+    entryIndex: idx,
+    entryTime: series.times[idx],
+    targetPrice: tp,
+    status: 'open',
+    bestMovePct: 0,
+    finalMovePct: null,
+    hitTarget: false
+  });
+  if(perfLog.trades.length > 500) perfLog.trades = perfLog.trades.slice(-500);
+  savePerf();
+}
+
+function updatePerfTracking(){
+  let changed = false;
+  const lookahead = (config.perfLookaheadBars!=null && !isNaN(config.perfLookaheadBars)) ? config.perfLookaheadBars : 20;
+  perfLog.trades.forEach(t=>{
+    if(t.status !== 'open') return;
+    const cached = seriesCache[t.tf];
+    if(!cached) return;
+    const series = cached.series;
+    const lastIdx = series.closes.length-1;
+    const barsElapsed = lastIdx - t.entryIndex;
+    if(barsElapsed <= 0) return;
+    const buy = t.direction==='buy';
+    let bestPrice = buy ? -Infinity : Infinity;
+    for(let i=t.entryIndex+1; i<=lastIdx; i++){
+      const h = series.highs[i], l = series.lows[i];
+      if(buy){ if(h>bestPrice) bestPrice=h; if(t.targetPrice!=null && h>=t.targetPrice) t.hitTarget=true; }
+      else { if(l<bestPrice) bestPrice=l; if(t.targetPrice!=null && l<=t.targetPrice) t.hitTarget=true; }
+    }
+    if(bestPrice!==Infinity && bestPrice!==-Infinity){
+      t.bestMovePct = buy ? (bestPrice-t.entryPrice)/t.entryPrice*100 : (t.entryPrice-bestPrice)/t.entryPrice*100;
+    }
+    if(barsElapsed >= lookahead){
+      const finalPrice = series.closes[lastIdx];
+      t.finalMovePct = buy ? (finalPrice-t.entryPrice)/t.entryPrice*100 : (t.entryPrice-finalPrice)/t.entryPrice*100;
+      t.status = 'closed';
+      changed = true;
+    }
+  });
+  if(changed) savePerf();
+}
+
+function computeSetupStats(setupId){
+  const closed = perfLog.trades.filter(t=>t.setupId===setupId && t.status==='closed');
+  const n = closed.length;
+  if(n===0) return {n:0, winRate:null, avgMove:null, wins:0};
+  const wins = closed.filter(t=> t.hitTarget || t.finalMovePct>0).length;
+  const winRate = wins/n*100;
+  const avgMove = closed.reduce((a,t)=>a+t.finalMovePct,0)/n;
+  return {n, winRate, avgMove, wins};
+}
+function isUnderperformer(setupId){
+  const stats = computeSetupStats(setupId);
+  const minSample = (config.underperformMinSample!=null && !isNaN(config.underperformMinSample)) ? config.underperformMinSample : 8;
+  const threshold = (config.underperformThreshold!=null && !isNaN(config.underperformThreshold)) ? config.underperformThreshold : 35;
+  return stats.n>=minSample && stats.winRate < threshold;
+}
+
+function renderPerfTable(){
+  const body = document.getElementById('perfTableBody');
+  if(!body) return;
+  body.innerHTML = '';
+  const minSample = (config.underperformMinSample!=null && !isNaN(config.underperformMinSample)) ? config.underperformMinSample : 8;
+  const threshold = (config.underperformThreshold!=null && !isNaN(config.underperformThreshold)) ? config.underperformThreshold : 35;
+  let totalLogged = 0;
+  SETUPS_META.forEach(meta=>{
+    const stats = computeSetupStats(meta.id);
+    totalLogged += stats.n;
+    const tr = document.createElement('tr');
+    let status = 'No signals yet', statusClass = 'dim';
+    if(stats.n>0){
+      if(stats.n < minSample){ status = `Building sample (${stats.n}/${minSample})`; statusClass='dim'; }
+      else if(stats.winRate < threshold){ status = 'Underperforming'; statusClass='win-bad'; }
+      else { status = 'Tracking well'; statusClass='win-good'; }
+    }
+    tr.innerHTML = `<td>${meta.name}</td><td class="dim">${SETUP_PRIMARY_TF[meta.id]}</td>
+      <td>${stats.n||0}</td>
+      <td class="${stats.n>0 ? (stats.winRate>=50?'win-good':'win-bad') : 'dim'}">${stats.n>0?fmt(stats.winRate,0)+'%':'—'}</td>
+      <td class="${stats.n>0 ? (stats.avgMove>=0?'win-good':'win-bad') : 'dim'}">${stats.n>0?(stats.avgMove>=0?'+':'')+fmt(stats.avgMove,2)+'%':'—'}</td>
+      <td class="${statusClass}">${status}</td>`;
+    body.appendChild(tr);
+  });
+  const pill = document.getElementById('perfSamplePill');
+  if(pill){
+    const openCount = perfLog.trades.filter(t=>t.status==='open').length;
+    pill.textContent = `${totalLogged} signal${totalLogged===1?'':'s'} scored · ${openCount} open`;
+  }
 }
 
 function renderSetupCards(){
