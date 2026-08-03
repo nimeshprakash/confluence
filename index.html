@@ -208,7 +208,7 @@
     <div class="settings-grid">
       <div class="field">
         <label>Twelve Data API key</label>
-        <input type="password" id="apiKeyInput" placeholder="paste free API key">
+        <input type="password" id="apiKeyInput" placeholder="ca5b55b9b4704010a7b0983c6798513b">
       </div>
       <div class="field">
         <label>Symbol</label>
@@ -368,7 +368,12 @@ const AUTO_MAP = {
 
 let state = { buy:{}, sell:{} };
 let notes = { buy:{}, sell:{} }; // itemKey -> note string
-let config = { apiKey:'', symbol:'XAU/USD', refreshMinutes:3, dxySymbol:'DXY', yieldSymbol:'TNX', vixSymbol:'VIX', nextEventUTC:'', nextEventName:'' };
+// EDIT THIS LINE: paste your Twelve Data key between the quotes so it's baked into the file
+// and you never have to retype it. Get a free key at twelvedata.com.
+const EMBEDDED_API_KEY = 'PASTE_YOUR_TWELVE_DATA_KEY_HERE';
+
+let config = { apiKey:EMBEDDED_API_KEY, symbol:'XAU/USD', refreshMinutes:3, dxySymbol:'DXY', yieldSymbol:'TNX', vixSymbol:'VIX', nextEventUTC:'', nextEventName:'' };
+function hasValidApiKey(){ return !!(config.apiKey && config.apiKey !== 'PASTE_YOUR_TWELVE_DATA_KEY_HERE'); }
 let autoMode = false;
 let prevBannerState = "neutral";
 let seriesCache = {}; // tf -> {opens,highs,lows,closes,times}
@@ -385,7 +390,11 @@ async function loadAll(){
   if(!state.sell) state.sell = {};
   try{
     const c = await window.storage.get('xauusd-config', false);
-    if(c && c.value){ config = Object.assign(config, JSON.parse(c.value)); }
+    if(c && c.value){
+      const saved = JSON.parse(c.value);
+      if(!saved.apiKey) delete saved.apiKey; // keep the embedded default instead of an old blank save
+      config = Object.assign(config, saved);
+    }
   }catch(e){}
 }
 async function saveState(){ try{ await window.storage.set('xauusd-checklist-state', JSON.stringify(state), false); }catch(e){} }
@@ -1327,7 +1336,7 @@ function evaluateSide(side, tf, series, ind){
 }
 
 async function runAutoCycle(){
-  if(!config.apiKey){ setStatus('No API key saved — manual mode.', false); return; }
+  if(!hasValidApiKey()){ setStatus('No API key saved — edit EMBEDDED_API_KEY in the file, or paste one above.', false); return; }
   setStatus('Fetching latest data…', false);
   let errCount = 0;
   for(const tf of TFS){
@@ -1964,7 +1973,7 @@ document.getElementById('saveSettings').addEventListener('click', async ()=>{
   config.nextEventUTC = document.getElementById('eventTimeInput').value;
   config.nextEventName = document.getElementById('eventNameInput').value.trim();
   await saveConfig();
-  autoMode = !!config.apiKey;
+  autoMode = hasValidApiKey();
   applyAutoModeUI();
   applyStateToDOM();
   renderSetupCards();
@@ -1975,7 +1984,7 @@ document.getElementById('saveSettings').addEventListener('click', async ()=>{
     refreshTimer = setInterval(runAutoCycle, config.refreshMinutes*60*1000);
   }
 });
-document.getElementById('fetchNow').addEventListener('click', ()=>{ if(config.apiKey) runAutoCycle(); else setStatus('Add an API key first.', true); });
+document.getElementById('fetchNow').addEventListener('click', ()=>{ if(hasValidApiKey()) runAutoCycle(); else setStatus('Add an API key first.', true); });
 document.getElementById('resetHistory').addEventListener('click', async ()=>{
   if(!confirm('Clear all logged setup signals and win-rate history? This cannot be undone.')) return;
   SETUPS_META.forEach(m=> setupHistory[m.id] = []);
@@ -2012,7 +2021,7 @@ function tickClock(){
   renderChecklists();
   await loadAll();
   await loadHistory();
-  document.getElementById('apiKeyInput').value = config.apiKey || '';
+  document.getElementById('apiKeyInput').value = hasValidApiKey() ? config.apiKey : '';
   document.getElementById('symbolInput').value = config.symbol || 'XAU/USD';
   document.getElementById('refreshInput').value = config.refreshMinutes || 3;
   document.getElementById('dxySymbolInput').value = config.dxySymbol || 'DXY';
@@ -2020,7 +2029,7 @@ function tickClock(){
   document.getElementById('vixSymbolInput').value = config.vixSymbol || 'VIX';
   document.getElementById('eventTimeInput').value = config.nextEventUTC || '';
   document.getElementById('eventNameInput').value = config.nextEventName || '';
-  autoMode = !!config.apiKey;
+  autoMode = hasValidApiKey();
   applyAutoModeUI();
   applyStateToDOM();
   recompute();
