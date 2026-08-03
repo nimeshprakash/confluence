@@ -225,6 +225,31 @@
     </div>
     <div class="status-line" id="statusLine">No API key saved yet — running in manual checklist mode.</div>
     <div class="settings-note">Get a free key at twelvedata.com (no card required). The key is sent directly from your browser to Twelve Data to fetch price data — it never passes through Anthropic or Claude, and is only saved in this portal's own storage for your convenience.</div>
+
+    <div class="settings-head" style="margin-top:16px;"><h2>Macro &amp; intermarket (optional)</h2></div>
+    <div class="settings-grid">
+      <div class="field">
+        <label>DXY (Dollar Index) symbol</label>
+        <input type="text" id="dxySymbolInput" value="DXY" placeholder="e.g. DXY">
+      </div>
+      <div class="field">
+        <label>10Y yield symbol</label>
+        <input type="text" id="yieldSymbolInput" value="TNX" placeholder="e.g. TNX">
+      </div>
+      <div class="field">
+        <label>VIX symbol</label>
+        <input type="text" id="vixSymbolInput" value="VIX" placeholder="e.g. VIX">
+      </div>
+      <div class="field">
+        <label>Next high-impact event (UTC)</label>
+        <input type="datetime-local" id="eventTimeInput">
+      </div>
+      <div class="field">
+        <label>Event name</label>
+        <input type="text" id="eventNameInput" placeholder="e.g. CPI, NFP, FOMC">
+      </div>
+    </div>
+    <div class="settings-note">DXY / yield / VIX are fetched hourly (H1) alongside gold and feed setups 21–24 below. These index symbols aren't on every Twelve Data plan — if a symbol 404s or errors, that setup's card just shows "waiting for data" and everything else keeps working. Try alternates like <code>USDX</code> for the dollar index or <code>US10Y</code> for the 10-year if the defaults don't resolve on your plan. Adding these 3 extra symbols adds roughly 3 more API calls per refresh cycle — factor that into your Twelve Data rate limit.</div>
   </div>
 
   <div id="masterBanner" class="neutral">
@@ -285,11 +310,15 @@
     <br><br>
     <b>What's automatic vs. what isn't:</b> items tagged <span class="badge auto">AUTO</span> are computed every refresh cycle straight from live OHLC data (EMA stack order, RSI(21), CCI(81), EMA pullback proximity, candle patterns, market-structure and overhead-resistance/support heuristics). Market structure and resistance/support are estimated from recent swing pivots — verify visually if a call looks borderline. <b>Enter</b> and <b>Target</b> stay as manual checkboxes with a computed price suggestion next to them, since those are execution decisions, not yes/no conditions. This tool gives you information to make your own trading decision — it isn't financial advice.
     <br><br>
-    <b>Entry &amp; exit pricing on each card:</b> for any of the 20 setups currently signaling BUY or SELL, entry and a probable exit target are derived purely from that setup's own condition and timeframe (shown under its name) — there is no separate market-structure check layered on top. <b>Entry</b> is the current market price at the moment the setup signals. The <b>exit target</b> is the nearest recent swing high (for buys) or swing low (for sells) over the last 20 bars on that timeframe; if price has already moved beyond that extreme, it falls back to a projected move sized off the current swing range. This is a heuristic read of where price may probably reach, not a recommendation — always confirm on the chart before acting on it.
+    <b>Entry &amp; exit pricing on each card:</b> for any of the 30 setups currently signaling BUY or SELL, entry and a probable exit target are derived purely from that setup's own condition and timeframe (shown under its name) — there is no separate market-structure check layered on top. <b>Entry</b> is the current market price at the moment the setup signals. The <b>exit target</b> is the nearest recent swing high (for buys) or swing low (for sells) over the last 20 bars on that timeframe; if price has already moved beyond that extreme, it falls back to a projected move sized off the current swing range. This is a heuristic read of where price may probably reach, not a recommendation — always confirm on the chart before acting on it.
     <br><br>
     <b>Volatility filter (ATR):</b> every timeframe's ATR(14) is compared against its own 50-bar average. If a setup's primary timeframe is running <span class="vol-chip quiet" style="margin-top:0;">QUIET</span> (ATR &lt; 0.65× its recent average), that signal is treated as too low-energy to realistically reach its projected target — the card is downgraded to WATCHING and tagged <span class="vol-badge suppressed">VOL-SUPPRESSED</span> instead of firing a live BUY/SELL. If price is already running <span class="vol-chip expanding" style="margin-top:0;">EXPANDING</span> and has stretched more than 2.5× ATR away from its own EMA21, the setup still fires but is tagged <span class="vol-badge chase">CHASE RISK</span> as a low-probability-entry warning. The ATR-by-timeframe panel above shows the raw regime read for all five timeframes regardless of which setups are active.
     <br><br>
-    <b>Historical performance tracking:</b> every time a setup freshly flips to BUY or SELL, the portal logs that signal's entry price and target to its own storage. On each refresh it checks open signals against the highs/lows since entry: a signal is marked a <b>win</b> once its target is touched, and if 20 bars pass without that happening it's closed out as a win or loss based on whether price ever moved favorably. Each card shows a running <b>win rate</b> and <b>average % move</b> once it has closed signals — setups with 5+ signals and a win rate under 40% are flagged as historically weak so you can start discounting or ignoring rules that don't actually have edge, rather than treating all 20 setups as equally reliable. Track record data lives only in this portal's storage; use "Reset track record" in Automation to clear it.
+    <b>Historical performance tracking:</b> every time a setup freshly flips to BUY or SELL, the portal logs that signal's entry price and target to its own storage. On each refresh it checks open signals against the highs/lows since entry: a signal is marked a <b>win</b> once its target is touched, and if 20 bars pass without that happening it's closed out as a win or loss based on whether price ever moved favorably. Each card shows a running <b>win rate</b> and <b>average % move</b> once it has closed signals — setups with 5+ signals and a win rate under 40% are flagged as historically weak so you can start discounting or ignoring rules that don't actually have edge, rather than treating all 30 setups as equally reliable. Track record data lives only in this portal's storage; use "Reset track record" in Automation to clear it.
+    <br><br>
+    <b>Setups 21–24 (intermarket/macro):</b> these are the only setups that look outside gold's own OHLC. DXY Correlation Divergence and VIX Safe-Haven Alignment fetch their symbols on H1 and compare recent moves against gold's; the yield setup does the same for a rate-shock read. All three show <span class="setup-dir none" style="margin:0;">NO SIGNAL</span> until you add a symbol in Automation settings, and fail gracefully (no crash) if that symbol isn't on your Twelve Data plan. Setup 24 uses the manual "Next event" time you set — it flags a ±30 min blackout window around it, then a momentum-continuation trigger for 90 minutes after.
+    <br><br>
+    <b>Setups 25–30 (additional price action):</b> these diversify signal <i>type</i> rather than adding another EMA/RSI variant — a Turtle-style ATR breakout, a Bollinger squeeze/expansion, classic daily floor pivots, inside-bar/NR7 candle compression, fib-retracement/EMA confluence, and a session open-gap read. All run purely off the gold OHLC you're already fetching, so no extra API calls or setup required.
   </div>
 
   <div class="section-title">Chart for confirmation &amp; identification</div>
@@ -339,10 +368,11 @@ const AUTO_MAP = {
 
 let state = { buy:{}, sell:{} };
 let notes = { buy:{}, sell:{} }; // itemKey -> note string
-let config = { apiKey:'', symbol:'XAU/USD', refreshMinutes:3 };
+let config = { apiKey:'', symbol:'XAU/USD', refreshMinutes:3, dxySymbol:'DXY', yieldSymbol:'TNX', vixSymbol:'VIX', nextEventUTC:'', nextEventName:'' };
 let autoMode = false;
 let prevBannerState = "neutral";
 let seriesCache = {}; // tf -> {opens,highs,lows,closes,times}
+let macroCache = { dxy:null, yield:null, vix:null }; // symbol -> {series,ind} on H1, used by setups 21-23
 let refreshTimer = null;
 
 /* ---------- Persistence ---------- */
@@ -914,9 +944,215 @@ function detectLondonBreakout(m15){
 }
 
 
-async function fetchSeries(tf){
+/* ---------- Group A: Intermarket / macro setups (21-24) ---------- */
+
+// 21. DXY Correlation Divergence: flags when gold and the Dollar Index move the *same*
+// direction instead of their usual inverse relationship — a correlation breakdown that often
+// precedes a bigger move or a fakeout. Watch-only (directional bias is genuinely ambiguous).
+function detectDxyDivergence(h1Gold){
+  if(!h1Gold) return {direction:'none', note:'Waiting for H1 gold data'};
+  const dxy = macroCache.dxy;
+  if(!dxy) return {direction:'none', note:'Add a DXY symbol in Automation settings to enable this setup'};
+  const gs = h1Gold.series, ds = dxy.series;
+  const gl = gs.closes.length-1, dl = ds.closes.length-1;
+  const lb = 10;
+  if(gl<lb || dl<lb) return {direction:'none', note:'Not enough H1 history yet'};
+  const goldChg = (gs.closes[gl]-gs.closes[gl-lb])/gs.closes[gl-lb];
+  const dxyChg = (ds.closes[dl]-ds.closes[dl-lb])/ds.closes[dl-lb];
+  const threshold = 0.0015; // ~0.15% over the lookback to count as a real move
+  const goldUp = goldChg>threshold, goldDown = goldChg<-threshold;
+  const dxyUp = dxyChg>threshold, dxyDown = dxyChg<-threshold;
+  if(goldUp && dxyUp) return {direction:'watch', note:`Correlation breakdown: gold +${(goldChg*100).toFixed(2)}% while DXY also +${(dxyChg*100).toFixed(2)}% over ${lb} H1 bars — normal inverse relationship isn't holding, raises fakeout/reversal risk on the gold rally`};
+  if(goldDown && dxyDown) return {direction:'watch', note:`Correlation breakdown: gold ${(goldChg*100).toFixed(2)}% while DXY also ${(dxyChg*100).toFixed(2)}% over ${lb} H1 bars — both falling together, raises fakeout/reversal risk on the gold selloff`};
+  return {direction:'none', note:`Gold ${(goldChg*100).toFixed(2)}% vs DXY ${(dxyChg*100).toFixed(2)}% over ${lb} H1 bars — inverse relationship holding normally, no divergence`};
+}
+
+// 22. 10Y Yield Rate-Shock Filter: a fast spike (or drop) in the nominal 10Y yield often
+// causes gold's sharpest short-term moves, even against the medium-term trend.
+function detectYieldRateShock(h1Gold){
+  if(!h1Gold) return {direction:'none', note:'Waiting for H1 gold data'};
+  const yld = macroCache.yield;
+  if(!yld) return {direction:'none', note:'Add a 10Y yield symbol in Automation settings to enable this setup'};
+  const ys = yld.series, yl = ys.closes.length-1, lb=3;
+  if(yl<lb) return {direction:'none', note:'Not enough H1 yield history yet'};
+  const chg = (ys.closes[yl]-ys.closes[yl-lb])/ys.closes[yl-lb];
+  const threshold = 0.006; // ~0.6% move in the yield over 3 H1 bars = a fast rate-shock move
+  const gs = h1Gold.series, gl = gs.closes.length-1;
+  if(chg > threshold) return {direction:'sell', note:`10Y yield spiked +${(chg*100).toFixed(2)}% in ${lb} H1 bars (rate shock) — often pressures gold sharply short-term even if the medium-term trend is up`};
+  if(chg < -threshold) return {direction:'buy', note:`10Y yield dropped ${(chg*100).toFixed(2)}% in ${lb} H1 bars — falling yields are typically supportive for gold short-term`};
+  return {direction:'none', note:`10Y yield ${(chg*100).toFixed(2)}% over ${lb} H1 bars — no rate-shock move detected`};
+}
+
+// 23. VIX Safe-Haven Alignment: VIX breaking out together with gold is a higher-conviction
+// risk-off buy signal; a gold breakdown alongside a VIX spike is flagged as a caution (possible
+// broad liquidation rather than a clean haven bid).
+function detectVixSafeHaven(h1Gold){
+  if(!h1Gold) return {direction:'none', note:'Waiting for H1 gold data'};
+  const vix = macroCache.vix;
+  if(!vix) return {direction:'none', note:'Add a VIX symbol in Automation settings to enable this setup'};
+  const gs = h1Gold.series, gl = gs.closes.length-1, lbG=20;
+  const vs = vix.series, vl = vs.closes.length-1, lbV=10;
+  if(gl<lbG || vl<lbV) return {direction:'none', note:'Not enough H1 history yet'};
+  const goldRecentHigh = Math.max(...gs.highs.slice(gl-lbG, gl));
+  const goldRecentLow = Math.min(...gs.lows.slice(gl-lbG, gl));
+  const goldBreakUp = gs.closes[gl] > goldRecentHigh;
+  const goldBreakDown = gs.closes[gl] < goldRecentLow;
+  const vixChg = (vs.closes[vl]-vs.closes[vl-lbV])/vs.closes[vl-lbV];
+  const vixSpiking = vixChg > 0.08; // VIX up 8%+ over 10 H1 bars = a real fear spike
+  if(goldBreakUp && vixSpiking) return {direction:'buy', note:`Gold broke its ${lbG}-bar H1 high while VIX spiked +${(vixChg*100).toFixed(1)}% — safe-haven bid, higher-conviction buy`};
+  if(goldBreakDown && vixSpiking) return {direction:'watch', note:`Gold broke down while VIX also spiked +${(vixChg*100).toFixed(1)}% — could be broad risk-off liquidation rather than a clean haven bid, treat with caution`};
+  if(vixSpiking) return {direction:'watch', note:`VIX spiking +${(vixChg*100).toFixed(1)}% over ${lbV} H1 bars — watching for gold to break out in sympathy`};
+  return {direction:'none', note:`VIX ${(vixChg*100).toFixed(1)}% over ${lbV} H1 bars — no fear spike, no safe-haven alignment signal`};
+}
+
+// 24. Economic Event Blackout & Trigger: suppresses conviction inside a manual NFP/CPI/FOMC
+// window and flags a post-event momentum-continuation trigger once the dust settles.
+function detectEventTrigger(h1Gold){
+  if(!config.nextEventUTC) return {direction:'none', note:'Set a "Next high-impact event (UTC)" time in Automation settings to enable this setup'};
+  if(!h1Gold) return {direction:'none', note:'Waiting for H1 gold data'};
+  const eventTime = new Date(config.nextEventUTC.length===16 ? config.nextEventUTC+':00Z' : config.nextEventUTC);
+  if(isNaN(eventTime.getTime())) return {direction:'none', note:'Invalid event time'};
+  const name = config.nextEventName ? config.nextEventName : 'high-impact event';
+  const now = new Date();
+  const minsToEvent = (eventTime.getTime() - now.getTime())/60000;
+  if(minsToEvent > 30) {
+    const hrs = Math.floor(minsToEvent/60), mins = Math.round(minsToEvent%60);
+    return {direction:'none', note:`${name} in ${hrs}h ${mins}m — outside the blackout/trigger window`};
+  }
+  if(minsToEvent >= -30) {
+    return {direction:'watch', note:`Inside the ${name} blackout window (±30 min) — treat new signals from every setup with extra caution until this clears`};
+  }
+  if(minsToEvent >= -90) {
+    const s = h1Gold.series, ind = h1Gold.ind, last = s.closes.length-1;
+    const range = s.highs[last]-s.lows[last];
+    const atr = ind.atr14[last];
+    const bigBar = atr && range > 1.5*atr;
+    const bull = s.closes[last] > s.opens[last], bear = s.closes[last] < s.opens[last];
+    if(bigBar && bull) return {direction:'buy', note:`Post-${name} momentum: H1 range is ${atr?(range/atr).toFixed(1):'—'}x ATR on a bullish close — continuation trigger`};
+    if(bigBar && bear) return {direction:'sell', note:`Post-${name} momentum: H1 range is ${atr?(range/atr).toFixed(1):'—'}x ATR on a bearish close — continuation trigger`};
+    return {direction:'none', note:`${name} released within the last 90 min — no outsized momentum bar yet to trigger continuation`};
+  }
+  return {direction:'none', note:`${name} was more than 90 min ago — outside the trigger window`};
+}
+
+/* ---------- Group D: additional price-action setups (25-30) ---------- */
+
+// 25. ATR Volatility Breakout (Turtle-style): close breaks prior close by k*ATR, filtered by EMA50.
+function detectAtrBreakout(h1){
+  if(!h1) return {direction:'none', note:'Waiting for H1 data'};
+  const s=h1.series, ind=h1.ind, last=s.closes.length-1;
+  if(last<2) return {direction:'none', note:'Not enough H1 history yet'};
+  const atr = ind.atr14[last-1];
+  if(atr==null) return {direction:'none', note:'ATR not yet available'};
+  const k = 1.0;
+  const priorClose = s.closes[last-1];
+  const upper = priorClose + k*atr, lower = priorClose - k*atr;
+  const c = s.closes[last], e50 = ind.ema50[last];
+  if(c>upper && c>e50) return {direction:'buy', note:`Closed ${fmt(c)}, more than ${k}x ATR (${fmt(atr)}) above prior close ${fmt(priorClose)}, and above EMA50 — Turtle-style breakout`};
+  if(c<lower && c<e50) return {direction:'sell', note:`Closed ${fmt(c)}, more than ${k}x ATR (${fmt(atr)}) below prior close ${fmt(priorClose)}, and below EMA50 — Turtle-style breakdown`};
+  return {direction:'none', note:`Price ${fmt(c)} within ${k}x ATR of prior close ${fmt(priorClose)} — no volatility breakout on H1`};
+}
+
+// 26. Bollinger Band Squeeze → Expansion: narrow bandwidth followed by a close outside the bands.
+function detectBbSqueeze(h1){
+  if(!h1) return {direction:'none', note:'Waiting for H1 data'};
+  const s=h1.series, ind=h1.ind, last=s.closes.length-1, lb=50;
+  if(last<lb || ind.bbWidth[last]==null) return {direction:'none', note:'Not enough H1 history yet for Bollinger Bands'};
+  const widths = ind.bbWidth.slice(Math.max(0,last-lb), last).filter(v=>v!=null);
+  const avgWidth = widths.length ? widths.reduce((a,b)=>a+b,0)/widths.length : null;
+  let wasSqueezed = false;
+  for(let i=Math.max(0,last-6); i<last; i++){
+    if(avgWidth && ind.bbWidth[i]!=null && ind.bbWidth[i] < 0.6*avgWidth) wasSqueezed = true;
+  }
+  const c = s.closes[last];
+  if(wasSqueezed && c > ind.bbUpper[last]) return {direction:'buy', note:`Bollinger squeeze (bandwidth well below its ${lb}-bar average) followed by a close above the upper band — expansion breakout`};
+  if(wasSqueezed && c < ind.bbLower[last]) return {direction:'sell', note:`Bollinger squeeze followed by a close below the lower band — expansion breakdown`};
+  if(wasSqueezed) return {direction:'watch', note:'Bollinger Bands squeezed narrow recently — waiting for a close outside the bands to confirm expansion direction'};
+  return {direction:'none', note:`Bandwidth ${avgWidth?((ind.bbWidth[last]/avgWidth).toFixed(2)+'x avg'):'—'} — no squeeze/expansion setup active`};
+}
+
+// 27. Pivot Point Bounce/Breakout: classic daily floor pivots (P/R1/S1/R2/S2) vs H1 price action.
+function detectPivotBounceBreakout(d1, h1){
+  if(!d1 || !h1) return {direction:'none', note:'Waiting for D1 and H1 data'};
+  const ds = d1.series, idx = ds.closes.length-2; // last fully completed prior day
+  if(idx<0) return {direction:'none', note:'Not enough D1 history yet'};
+  const p = (ds.highs[idx]+ds.lows[idx]+ds.closes[idx])/3;
+  const r1 = 2*p - ds.lows[idx], s1 = 2*p - ds.highs[idx];
+  const r2 = p + (ds.highs[idx]-ds.lows[idx]), s2 = p - (ds.highs[idx]-ds.lows[idx]);
+  const hs = h1.series, last = hs.closes.length-1;
+  const c = hs.closes[last];
+  const bullCandle = hs.closes[last] > hs.opens[last], bearCandle = hs.closes[last] < hs.opens[last];
+  const touchS1 = touchesLevel(hs.highs, hs.lows, s1, 3), touchR1 = touchesLevel(hs.highs, hs.lows, r1, 3);
+  if(touchS1 && bullCandle && c>s1) return {direction:'buy', note:`Bounced off S1 pivot ${fmt(s1)} (P ${fmt(p)}) with a bullish H1 candle`};
+  if(touchR1 && bearCandle && c<r1) return {direction:'sell', note:`Rejected R1 pivot ${fmt(r1)} (P ${fmt(p)}) with a bearish H1 candle`};
+  if(c>r1 && bullCandle) return {direction:'buy', note:`Broke above R1 pivot resistance ${fmt(r1)} — next level R2 ${fmt(r2)}`};
+  if(c<s1 && bearCandle) return {direction:'sell', note:`Broke below S1 pivot support ${fmt(s1)} — next level S2 ${fmt(s2)}`};
+  return {direction:'none', note:`Pivots: S1 ${fmt(s1)} / P ${fmt(p)} / R1 ${fmt(r1)}, price ${fmt(c)} — no bounce or breakout right now`};
+}
+
+// 28. Inside Bar / NR7 Compression Breakout: pure candle-geometry compression + breakout, no EMA/RSI.
+function detectInsideBarNr7(h1){
+  if(!h1) return {direction:'none', note:'Waiting for H1 data'};
+  const s=h1.series, last=s.closes.length-1;
+  if(last<8) return {direction:'none', note:'Not enough H1 history yet'};
+  const prevIdx = last-1;
+  const isInside = s.highs[prevIdx] < s.highs[prevIdx-1] && s.lows[prevIdx] > s.lows[prevIdx-1];
+  const ranges7 = [];
+  for(let i=prevIdx-6; i<=prevIdx; i++) ranges7.push(s.highs[i]-s.lows[i]);
+  const isNr7 = (s.highs[prevIdx]-s.lows[prevIdx]) <= Math.min(...ranges7) + 1e-9;
+  const c = s.closes[last];
+  const breakoutUp = c > s.highs[prevIdx], breakoutDown = c < s.lows[prevIdx];
+  if((isInside||isNr7) && breakoutUp) return {direction:'buy', note:`${isInside?'Inside bar':'NR7'} compression on the prior H1 candle, broken to the upside at ${fmt(c)}`};
+  if((isInside||isNr7) && breakoutDown) return {direction:'sell', note:`${isInside?'Inside bar':'NR7'} compression on the prior H1 candle, broken to the downside at ${fmt(c)}`};
+  if(isInside||isNr7) return {direction:'watch', note:`${isInside?'Inside bar':'NR7'} compression just formed — waiting for a breakout of ${fmt(s.lows[prevIdx])}–${fmt(s.highs[prevIdx])}`};
+  return {direction:'none', note:'No inside bar / NR7 compression on the prior H1 candle'};
+}
+
+// 29. Fibonacci Retracement Confluence: 38.2/50/61.8% pullback zone lining up with EMA21/50.
+function detectFibConfluence(h1){
+  if(!h1) return {direction:'none', note:'Waiting for H1 data'};
+  const s=h1.series, ind=h1.ind, last=s.closes.length-1, lb=Math.min(50,last);
+  if(lb<10) return {direction:'none', note:'Not enough H1 history yet'};
+  const window = {highs:s.highs.slice(last-lb,last+1), lows:s.lows.slice(last-lb,last+1)};
+  const swingHigh = Math.max(...window.highs), swingLow = Math.min(...window.lows);
+  const range = swingHigh - swingLow;
+  if(range<=0) return {direction:'none', note:'No usable swing range on H1'};
+  const c = s.closes[last];
+  const trendBull = ind.ema21[last] > ind.ema50[last], trendBear = ind.ema21[last] < ind.ema50[last];
+  const fib382 = swingHigh - range*0.382, fib50 = swingHigh - range*0.5, fib618 = swingHigh - range*0.618;
+  const inZoneDown = c<=fib382 && c>=fib618; // pulling back down from the high, within the 38.2-61.8 zone
+  const nearEma = (touchesEma(s.highs,s.lows,ind.ema21,2) || touchesEma(s.highs,s.lows,ind.ema50,2));
+  const bullCandle = c>s.opens[last];
+  const bearCandle = c<s.opens[last];
+  if(trendBull && inZoneDown && nearEma && bullCandle) return {direction:'buy', note:`Pullback into the 38.2–61.8% fib zone (${fmt(fib618)}–${fmt(fib382)}) of the last ${lb}-bar swing, confluent with EMA21/50, bullish candle`};
+  if(trendBear && inZoneDown && nearEma && bearCandle) return {direction:'sell', note:`Rally into the 38.2–61.8% fib zone (${fmt(fib382)}–${fmt(fib618)}) of the last ${lb}-bar swing, confluent with EMA21/50, bearish candle`};
+  if(inZoneDown && nearEma) return {direction:'watch', note:`Price inside the 38.2–61.8% fib zone with EMA21/50 confluence — waiting on trend + candle confirmation`};
+  return {direction:'none', note:`Fib zone: ${fmt(fib618)}–${fmt(fib382)} (of ${fmt(swingLow)}–${fmt(swingHigh)} swing), price ${fmt(c)} outside/no EMA confluence`};
+}
+
+// 30. Session Gap Analysis: gap between the prior D1 close and today's open — gap-and-go continuation
+// vs gap-fill mean reversion.
+function detectGapAnalysis(d1){
+  if(!d1) return {direction:'none', note:'Waiting for D1 data'};
+  const s = d1.series, last = s.closes.length-1;
+  if(last<1) return {direction:'none', note:'Not enough D1 history yet'};
+  const prevClose = s.closes[last-1], todayOpen = s.opens[last], current = s.closes[last];
+  const gap = todayOpen - prevClose, gapPct = gap/prevClose;
+  const threshold = 0.001; // 0.1% minimum to count as a real gap on near-continuous gold
+  if(Math.abs(gapPct) < threshold) return {direction:'none', note:`No meaningful session gap — open ${fmt(todayOpen)} vs prior close ${fmt(prevClose)}`};
+  const gapUp = gap>0;
+  const filled = gapUp ? current <= prevClose*1.0005 : current >= prevClose*0.9995;
+  if(gapUp && filled) return {direction:'sell', note:`Gapped up ${(gapPct*100).toFixed(2)}% then filled back to prior close ${fmt(prevClose)} — gap-fill fade`};
+  if(!gapUp && filled) return {direction:'buy', note:`Gapped down ${(gapPct*100).toFixed(2)}% then filled back to prior close ${fmt(prevClose)} — gap-fill fade`};
+  if(gapUp && current>todayOpen) return {direction:'buy', note:`Gapped up ${(gapPct*100).toFixed(2)}% and holding above the open — gap-and-go continuation`};
+  if(!gapUp && current<todayOpen) return {direction:'sell', note:`Gapped down ${(gapPct*100).toFixed(2)}% and holding below the open — gap-and-go continuation`};
+  return {direction:'watch', note:`Gap of ${(gapPct*100).toFixed(2)}% open, price ${fmt(current)} — direction not yet confirmed`};
+}
+
+async function fetchSeries(tf, symbolOverride){
   const interval = TF_TD_INTERVAL[tf];
-  const url = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(config.symbol)}&interval=${interval}&outputsize=400&apikey=${encodeURIComponent(config.apiKey)}&format=JSON`;
+  const symbol = symbolOverride || config.symbol;
+  const url = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(symbol)}&interval=${interval}&outputsize=400&apikey=${encodeURIComponent(config.apiKey)}&format=JSON`;
   const res = await fetch(url);
   const data = await res.json();
   if(data.status === 'error' || data.code){
@@ -933,13 +1169,37 @@ async function fetchSeries(tf){
   };
 }
 
+function bollinger(closes, period, mult){
+  const n = closes.length;
+  const mid = new Array(n).fill(null), upper = new Array(n).fill(null), lower = new Array(n).fill(null), width = new Array(n).fill(null);
+  for(let i=period-1;i<n;i++){
+    const slice = closes.slice(i-period+1, i+1);
+    const sma = slice.reduce((a,b)=>a+b,0)/period;
+    const variance = slice.reduce((a,b)=>a+(b-sma)*(b-sma),0)/period;
+    const sd = Math.sqrt(variance);
+    mid[i] = sma; upper[i] = sma + mult*sd; lower[i] = sma - mult*sd;
+    width[i] = sma>0 ? (upper[i]-lower[i])/sma : null;
+  }
+  return {mid, upper, lower, width};
+}
 function computeIndicators(series){
+  const bb = bollinger(series.closes, 20, 2);
   return {
     ema8: ema(series.closes,8), ema9: ema(series.closes,9), ema13: ema(series.closes,13), ema21: ema(series.closes,21),
     ema50: ema(series.closes,50), ema100: ema(series.closes,100), ema200: ema(series.closes,200),
     rsi21: rsiWilder(series.closes,21), cci81: cci(series.highs, series.lows, series.closes, 81),
-    atr14: atrWilder(series.highs, series.lows, series.closes, 14)
+    atr14: atrWilder(series.highs, series.lows, series.closes, 14),
+    bbMid: bb.mid, bbUpper: bb.upper, bbLower: bb.lower, bbWidth: bb.width
   };
+}
+function touchesLevel(highs, lows, level, lookback){
+  const n = highs.length;
+  for(let i=1;i<=lookback;i++){
+    const idx = n-i;
+    if(idx<0 || level==null) continue;
+    if(lows[idx] <= level && highs[idx] >= level) return true;
+  }
+  return false;
 }
 
 /* ---------- Volatility (ATR) filter ---------- */
@@ -1081,6 +1341,23 @@ async function runAutoCycle(){
       setStatus(`Error fetching ${tf}: ${e.message}`, true);
     }
   }
+  // Optional macro symbols (setups 21-23) — fetched on H1 only, failures are non-fatal
+  const macroJobs = [
+    {key:'dxy', symbol:(config.dxySymbol||'').trim()},
+    {key:'yield', symbol:(config.yieldSymbol||'').trim()},
+    {key:'vix', symbol:(config.vixSymbol||'').trim()}
+  ];
+  for(const job of macroJobs){
+    if(!job.symbol) { macroCache[job.key] = null; continue; }
+    try{
+      const series = await fetchSeries('H1', job.symbol);
+      macroCache[job.key] = {series, ind: computeIndicators(series)};
+      await new Promise(r=>setTimeout(r, 250));
+    }catch(e){
+      macroCache[job.key] = null; // silently skip — that setup card just reports "waiting for data"
+    }
+  }
+
   ['buy','sell'].forEach(side=>{
     TFS.forEach(tf=>{
       const cached = seriesCache[tf];
@@ -1127,7 +1404,17 @@ const SETUPS_META = [
   {id:'rsiCciExtremeReversal',    name:'17. RSI + CCI Extreme Reversal',     tf:'H1'},
   {id:'rsiFailureSwing',          name:'18. RSI Failure Swing',              tf:'H1'},
   {id:'cciZeroLine',              name:'19. CCI Zero-Line Strategy',         tf:'H1'},
-  {id:'londonBreakout',           name:'20. London Breakout Filter',         tf:'M15'}
+  {id:'londonBreakout',           name:'20. London Breakout Filter',         tf:'M15'},
+  {id:'dxyDivergence',            name:'21. DXY Correlation Divergence',     tf:'H1 (macro)'},
+  {id:'yieldRateShock',           name:'22. 10Y Yield Rate-Shock Filter',    tf:'H1 (macro)'},
+  {id:'vixSafeHaven',             name:'23. VIX Safe-Haven Alignment',       tf:'H1 (macro)'},
+  {id:'eventTrigger',             name:'24. Economic Event Blackout/Trigger',tf:'H1 (event)'},
+  {id:'atrBreakout',              name:'25. ATR Volatility Breakout',        tf:'H1'},
+  {id:'bbSqueeze',                name:'26. Bollinger Band Squeeze',         tf:'H1'},
+  {id:'pivotBounceBreakout',      name:'27. Pivot Point Bounce/Breakout',    tf:'H1'},
+  {id:'insideBarNr7',             name:'28. Inside Bar / NR7 Compression',   tf:'H1'},
+  {id:'fibConfluence',            name:'29. Fibonacci Retracement Confluence', tf:'H1'},
+  {id:'gapAnalysis',              name:'30. Session Gap Analysis',           tf:'D1'}
 ];
 let setupResults = {}; // id -> {direction, note, levels}
 let prevSetupDirections = {}; // id -> last direction, used to fire an alert only on a fresh signal
@@ -1166,7 +1453,10 @@ const SETUP_PRIMARY_TF = {
   cciExtreme:'M15', multiTfTrend:'M5', ema200Filter:'H4', fakeBreakout:'H1',
   liquiditySweep:'M15', doubleTopBottom:'H1', emaScalp9:'M5',
   emaRibbonBreakout:'M15', rsiCciExtremeReversal:'H1', rsiFailureSwing:'H1',
-  cciZeroLine:'H1', londonBreakout:'M15'
+  cciZeroLine:'H1', londonBreakout:'M15',
+  dxyDivergence:'H1', yieldRateShock:'H1', vixSafeHaven:'H1', eventTrigger:'H1',
+  atrBreakout:'H1', bbSqueeze:'H1', pivotBounceBreakout:'H1', insideBarNr7:'H1',
+  fibConfluence:'H1', gapAnalysis:'D1'
 };
 
 // Entry & exit pricing now live in setupTradeLevels() above, based purely on the setup's
@@ -1194,6 +1484,17 @@ function evaluateAllSetups(){
   setupResults.rsiFailureSwing       = h1  ? detectRsiFailureSwing(h1)              : {direction:'none', note:'Waiting for H1 data'};
   setupResults.cciZeroLine           = h1  ? detectCciZeroLine(h1)                  : {direction:'none', note:'Waiting for H1 data'};
   setupResults.londonBreakout        = m15 ? detectLondonBreakout(m15)              : {direction:'none', note:'Waiting for M15 data'};
+
+  setupResults.dxyDivergence         = detectDxyDivergence(h1);
+  setupResults.yieldRateShock        = detectYieldRateShock(h1);
+  setupResults.vixSafeHaven          = detectVixSafeHaven(h1);
+  setupResults.eventTrigger          = detectEventTrigger(h1);
+  setupResults.atrBreakout           = h1 ? detectAtrBreakout(h1)                   : {direction:'none', note:'Waiting for H1 data'};
+  setupResults.bbSqueeze             = h1 ? detectBbSqueeze(h1)                     : {direction:'none', note:'Waiting for H1 data'};
+  setupResults.pivotBounceBreakout   = detectPivotBounceBreakout(d1, h1);
+  setupResults.insideBarNr7          = h1 ? detectInsideBarNr7(h1)                  : {direction:'none', note:'Waiting for H1 data'};
+  setupResults.fibConfluence         = h1 ? detectFibConfluence(h1)                 : {direction:'none', note:'Waiting for H1 data'};
+  setupResults.gapAnalysis           = detectGapAnalysis(d1);
 
   applyVolatilityFilter();
 
@@ -1657,6 +1958,11 @@ document.getElementById('saveSettings').addEventListener('click', async ()=>{
   config.apiKey = document.getElementById('apiKeyInput').value.trim();
   config.symbol = document.getElementById('symbolInput').value.trim() || 'XAU/USD';
   config.refreshMinutes = Math.max(1, parseInt(document.getElementById('refreshInput').value)||3);
+  config.dxySymbol = document.getElementById('dxySymbolInput').value.trim();
+  config.yieldSymbol = document.getElementById('yieldSymbolInput').value.trim();
+  config.vixSymbol = document.getElementById('vixSymbolInput').value.trim();
+  config.nextEventUTC = document.getElementById('eventTimeInput').value;
+  config.nextEventName = document.getElementById('eventNameInput').value.trim();
   await saveConfig();
   autoMode = !!config.apiKey;
   applyAutoModeUI();
@@ -1709,6 +2015,11 @@ function tickClock(){
   document.getElementById('apiKeyInput').value = config.apiKey || '';
   document.getElementById('symbolInput').value = config.symbol || 'XAU/USD';
   document.getElementById('refreshInput').value = config.refreshMinutes || 3;
+  document.getElementById('dxySymbolInput').value = config.dxySymbol || 'DXY';
+  document.getElementById('yieldSymbolInput').value = config.yieldSymbol || 'TNX';
+  document.getElementById('vixSymbolInput').value = config.vixSymbol || 'VIX';
+  document.getElementById('eventTimeInput').value = config.nextEventUTC || '';
+  document.getElementById('eventNameInput').value = config.nextEventName || '';
   autoMode = !!config.apiKey;
   applyAutoModeUI();
   applyStateToDOM();
