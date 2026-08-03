@@ -83,6 +83,31 @@
   #enableNotif{background:var(--panel-2); color:var(--text); border:1px solid var(--line); padding:8px 14px; border-radius:8px; cursor:pointer; font-size:12px; font-family:var(--sans);}
   #enableNotif:hover{border-color:var(--gold);}
 
+  /* Volatility (ATR) panel */
+  .vol-panel{display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:18px;}
+  .vol-box{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px 14px;}
+  .vol-box .vol-tf{font-size:11px; color:var(--muted); font-family:var(--mono); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px;}
+  .vol-box .vol-atr{font-size:16px; font-weight:700; font-family:var(--mono); color:var(--text);}
+  .vol-box .vol-ratio{font-size:11px; color:var(--muted); font-family:var(--mono); margin-top:2px;}
+  .vol-chip{display:inline-block; margin-top:8px; font-size:10px; font-family:var(--mono); font-weight:700; padding:2px 8px; border-radius:20px;}
+  .vol-chip.quiet{color:var(--muted); background:var(--panel-2); border:1px solid var(--line);}
+  .vol-chip.normal{color:var(--text); background:var(--panel-2); border:1px solid var(--line);}
+  .vol-chip.expanding{color:var(--gold); background:var(--gold-dim); border:1px solid var(--gold);}
+  .vol-chip.unknown{color:var(--muted); background:var(--panel-2); border:1px solid var(--line);}
+
+  /* Per-card volatility & chase-risk badges */
+  .vol-badge{display:inline-block; font-size:9px; font-family:var(--mono); font-weight:700; padding:1px 7px; border-radius:10px; margin-left:6px; vertical-align:middle;}
+  .vol-badge.suppressed{color:var(--muted); background:var(--panel-2); border:1px solid var(--line);}
+  .vol-badge.chase{color:var(--gold); background:var(--gold-dim); border:1px solid var(--gold);}
+
+  /* Historical performance tracking per setup */
+  .perf-track{margin-top:8px; padding-top:8px; border-top:1px dashed var(--line); font-size:11px; font-family:var(--mono); color:var(--text);}
+  .perf-track.dim{color:var(--muted); font-style:italic;}
+  .perf-track.good{color:var(--buy);}
+  .perf-track.bad{color:var(--sell);}
+  .perf-warn{font-size:10px; font-family:var(--mono); color:var(--sell); margin-top:3px;}
+  .setup-card.weak{opacity:0.72;}
+
   /* Settings / automation panel */
   .settings{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin-bottom:18px;}
   .settings-head{display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;}
@@ -196,6 +221,7 @@
       <button class="btn primary" id="saveSettings">Save &amp; start auto-checking</button>
       <button class="btn" id="fetchNow">Refresh now</button>
       <button class="btn" id="stopAuto">Stop auto mode</button>
+      <button class="btn" id="resetHistory">Reset track record</button>
     </div>
     <div class="status-line" id="statusLine">No API key saved yet — running in manual checklist mode.</div>
     <div class="settings-note">Get a free key at twelvedata.com (no card required). The key is sent directly from your browser to Twelve Data to fetch price data — it never passes through Anthropic or Claude, and is only saved in this portal's own storage for your convenience.</div>
@@ -244,6 +270,9 @@
     </div>
   </div>
 
+  <div class="section-title">Volatility filter — ATR(14) by timeframe</div>
+  <div class="vol-panel" id="volPanel"></div>
+
   <div class="section-title">All setups — live status</div>
   <div class="setup-grid" id="setupGrid"></div>
 
@@ -257,6 +286,10 @@
     <b>What's automatic vs. what isn't:</b> items tagged <span class="badge auto">AUTO</span> are computed every refresh cycle straight from live OHLC data (EMA stack order, RSI(21), CCI(81), EMA pullback proximity, candle patterns, market-structure and overhead-resistance/support heuristics). Market structure and resistance/support are estimated from recent swing pivots — verify visually if a call looks borderline. <b>Enter</b> and <b>Target</b> stay as manual checkboxes with a computed price suggestion next to them, since those are execution decisions, not yes/no conditions. This tool gives you information to make your own trading decision — it isn't financial advice.
     <br><br>
     <b>Entry &amp; exit pricing on each card:</b> for any of the 20 setups currently signaling BUY or SELL, entry and a probable exit target are derived purely from that setup's own condition and timeframe (shown under its name) — there is no separate market-structure check layered on top. <b>Entry</b> is the current market price at the moment the setup signals. The <b>exit target</b> is the nearest recent swing high (for buys) or swing low (for sells) over the last 20 bars on that timeframe; if price has already moved beyond that extreme, it falls back to a projected move sized off the current swing range. This is a heuristic read of where price may probably reach, not a recommendation — always confirm on the chart before acting on it.
+    <br><br>
+    <b>Volatility filter (ATR):</b> every timeframe's ATR(14) is compared against its own 50-bar average. If a setup's primary timeframe is running <span class="vol-chip quiet" style="margin-top:0;">QUIET</span> (ATR &lt; 0.65× its recent average), that signal is treated as too low-energy to realistically reach its projected target — the card is downgraded to WATCHING and tagged <span class="vol-badge suppressed">VOL-SUPPRESSED</span> instead of firing a live BUY/SELL. If price is already running <span class="vol-chip expanding" style="margin-top:0;">EXPANDING</span> and has stretched more than 2.5× ATR away from its own EMA21, the setup still fires but is tagged <span class="vol-badge chase">CHASE RISK</span> as a low-probability-entry warning. The ATR-by-timeframe panel above shows the raw regime read for all five timeframes regardless of which setups are active.
+    <br><br>
+    <b>Historical performance tracking:</b> every time a setup freshly flips to BUY or SELL, the portal logs that signal's entry price and target to its own storage. On each refresh it checks open signals against the highs/lows since entry: a signal is marked a <b>win</b> once its target is touched, and if 20 bars pass without that happening it's closed out as a win or loss based on whether price ever moved favorably. Each card shows a running <b>win rate</b> and <b>average % move</b> once it has closed signals — setups with 5+ signals and a win rate under 40% are flagged as historically weak so you can start discounting or ignoring rules that don't actually have edge, rather than treating all 20 setups as equally reliable. Track record data lives only in this portal's storage; use "Reset track record" in Automation to clear it.
   </div>
 
   <div class="section-title">Chart for confirmation &amp; identification</div>
@@ -364,6 +397,28 @@ function rsiWilder(closes, period){
   }
   return out;
 }
+function atrWilder(highs, lows, closes, period){
+  const n = closes.length;
+  const tr = new Array(n).fill(null);
+  for(let i=0;i<n;i++){
+    if(i===0){ tr[i] = highs[i]-lows[i]; continue; }
+    const hl = highs[i]-lows[i];
+    const hc = Math.abs(highs[i]-closes[i-1]);
+    const lc = Math.abs(lows[i]-closes[i-1]);
+    tr[i] = Math.max(hl,hc,lc);
+  }
+  const out = new Array(n).fill(null);
+  if(n<period) return out;
+  let sum=0;
+  for(let i=0;i<period;i++) sum+=tr[i];
+  let prev = sum/period;
+  out[period-1] = prev;
+  for(let i=period;i<n;i++){
+    prev = (prev*(period-1)+tr[i])/period;
+    out[i] = prev;
+  }
+  return out;
+}
 function cci(highs, lows, closes, period){
   const tp = closes.map((c,i)=>(highs[i]+lows[i]+c)/3);
   const out = new Array(closes.length).fill(null);
@@ -372,25 +427,6 @@ function cci(highs, lows, closes, period){
     const sma = slice.reduce((a,b)=>a+b,0)/period;
     const md = slice.reduce((a,b)=>a+Math.abs(b-sma),0)/period;
     out[i] = md===0 ? 0 : (tp[i]-sma)/(0.015*md);
-  }
-  return out;
-}
-function atrWilder(highs, lows, closes, period){
-  const n = closes.length;
-  const tr = new Array(n).fill(null);
-  for(let i=0;i<n;i++){
-    if(i===0){ tr[i] = highs[i]-lows[i]; continue; }
-    tr[i] = Math.max(highs[i]-lows[i], Math.abs(highs[i]-closes[i-1]), Math.abs(lows[i]-closes[i-1]));
-  }
-  const out = new Array(n).fill(null);
-  if(n <= period) return out;
-  let sum=0;
-  for(let i=1;i<=period;i++) sum += tr[i];
-  let prev = sum/period;
-  out[period] = prev;
-  for(let i=period+1;i<n;i++){
-    prev = (prev*(period-1)+tr[i])/period;
-    out[i] = prev;
   }
   return out;
 }
@@ -906,39 +942,48 @@ function computeIndicators(series){
   };
 }
 
-/* ---------- Volatility filter (ATR) ---------- */
-// Suppresses signals when ATR is too small (relative to price) for the projected target to be
-// realistically reachable, and flags signals where price has already traveled a large multiple
-// of ATR away from its recent swing origin — i.e. a move that's likely already extended, so
-// entering now is more of a chase than a fresh setup.
-function assessVolatility(direction, cached){
-  if(!cached) return null;
-  const {series, ind} = cached;
+/* ---------- Volatility (ATR) filter ---------- */
+const VOL_AVG_LOOKBACK = 50;   // bars used to build each timeframe's "normal" ATR baseline
+const VOL_QUIET_RATIO = 0.65;  // current ATR below this fraction of the average = too dead to chase a target
+const VOL_EXPAND_RATIO = 1.6;  // current ATR above this fraction of the average = volatility expansion
+const VOL_CHASE_ATR_MULT = 2.5; // distance from EMA21, in ATRs, beyond which a fresh entry is a low-probability chase
+
+function assessVolatility(series, ind){
   const last = series.closes.length-1;
   const atr = ind.atr14[last];
-  const close = series.closes[last];
-  if(atr==null || !close){
-    return {atr:null, atrPct:null, suppressed:false, extended:false, note:'ATR still warming up (not enough bars yet)'};
-  }
-  const atrPct = (atr/close)*100;
-  const minPct = (config.atrMinPct!=null && !isNaN(config.atrMinPct)) ? config.atrMinPct : 0.03;
-  const suppressed = atrPct < minPct;
+  if(atr==null) return {status:'unknown', ratio:null, atr:null, avgAtr:null, extension:null};
+  const lb = Math.min(VOL_AVG_LOOKBACK, last+1);
+  const slice = ind.atr14.slice(last-lb+1, last+1).filter(v=>v!=null);
+  const avgAtr = slice.length ? slice.reduce((a,b)=>a+b,0)/slice.length : atr;
+  const ratio = avgAtr>0 ? atr/avgAtr : 1;
+  let status = 'normal';
+  if(ratio < VOL_QUIET_RATIO) status = 'quiet';
+  else if(ratio > VOL_EXPAND_RATIO) status = 'expanding';
+  const emaRef = ind.ema21 ? ind.ema21[last] : null;
+  const extension = (emaRef!=null && atr>0) ? Math.abs(series.closes[last]-emaRef)/atr : null;
+  return {status, ratio, atr, avgAtr, extension};
+}
 
-  const lb = Math.min(20, last+1);
-  const recentHigh = Math.max(...series.highs.slice(last-lb+1, last+1));
-  const recentLow = Math.min(...series.lows.slice(last-lb+1, last+1));
-  const buy = direction==='buy';
-  const origin = buy ? recentLow : recentHigh;
-  const traveled = Math.abs(close - origin);
-  const extMult = (config.atrExtendedMult!=null && !isNaN(config.atrExtendedMult)) ? config.atrExtendedMult : 2.5;
-  const atrMultiple = atr>0 ? traveled/atr : 0;
-  const extended = atr>0 && atrMultiple > extMult;
-
-  let note = `ATR(14) ${fmt(atr)} (${fmt(atrPct,2)}% of price)`;
-  if(suppressed) note += ` — below ${fmt(minPct,2)}% floor, too quiet to reliably reach target`;
-  if(extended) note += ` — already ${atrMultiple.toFixed(1)}× ATR from swing origin, likely an extended/late entry`;
-
-  return {atr, atrPct, suppressed, extended, atrMultiple, note};
+function renderVolatilityPanel(){
+  const panel = document.getElementById('volPanel');
+  if(!panel) return;
+  panel.innerHTML = '';
+  TFS.forEach(tf=>{
+    const cached = seriesCache[tf];
+    const box = document.createElement('div');
+    box.className = 'vol-box';
+    if(!cached){
+      box.innerHTML = `<div class="vol-tf">${tf} — ${TF_LABEL[tf]}</div><div class="vol-atr">—</div><div class="vol-ratio">Waiting for data</div><span class="vol-chip unknown">NO DATA</span>`;
+      panel.appendChild(box); return;
+    }
+    const vol = assessVolatility(cached.series, cached.ind);
+    const chipLabel = vol.status==='quiet' ? 'QUIET' : vol.status==='expanding' ? 'EXPANDING' : vol.status==='unknown' ? 'NO DATA' : 'NORMAL';
+    box.innerHTML = `<div class="vol-tf">${tf} — ${TF_LABEL[tf]}</div>
+      <div class="vol-atr">${fmt(vol.atr)}</div>
+      <div class="vol-ratio">${vol.ratio!=null ? (vol.ratio.toFixed(2)+'x '+VOL_AVG_LOOKBACK+'-bar avg') : '—'}</div>
+      <span class="vol-chip ${vol.status}">${chipLabel}</span>`;
+    panel.appendChild(box);
+  });
 }
 
 /* ---------- Small signal-logic helpers for the 15 named setups below ---------- */
@@ -1056,6 +1101,7 @@ async function runAutoCycle(){
   applyStateToDOM();
   recompute();
   evaluateAllSetups();
+  renderVolatilityPanel();
   renderSetupCards();
   updateMasterBanner();
   if(errCount===0) setStatus(`Last updated ${new Date().toLocaleTimeString()} · auto-checking every ${config.refreshMinutes} min`, false);
@@ -1085,6 +1131,33 @@ const SETUPS_META = [
 ];
 let setupResults = {}; // id -> {direction, note, levels}
 let prevSetupDirections = {}; // id -> last direction, used to fire an alert only on a fresh signal
+
+// Suppresses buy/sell signals when the setup's own timeframe is too quiet (ATR far below its
+// recent average) to realistically reach the projected target, and flags signals where price
+// has already stretched a long way from EMA21 in ATR terms as a low-probability chase.
+function applyVolatilityFilter(){
+  SETUPS_META.forEach(meta=>{
+    const r = setupResults[meta.id];
+    if(!r) return;
+    r.chaseWarning = false;
+    r.suppressedByVol = false;
+    const tf = SETUP_PRIMARY_TF[meta.id];
+    const cached = seriesCache[tf];
+    if(!cached){ r.volatility = null; return; }
+    const vol = assessVolatility(cached.series, cached.ind);
+    r.volatility = vol;
+    if(r.direction !== 'buy' && r.direction !== 'sell') return;
+    if(vol.status === 'quiet'){
+      r.rawDirection = r.direction;
+      r.suppressedByVol = true;
+      r.note = `${r.note} — suppressed: ATR (${fmt(vol.atr)}) is only ${vol.ratio.toFixed(2)}x the ${VOL_AVG_LOOKBACK}-bar average, too quiet to reasonably reach target`;
+      r.direction = 'watch';
+    } else if(vol.extension != null && vol.extension >= VOL_CHASE_ATR_MULT){
+      r.chaseWarning = true;
+      r.note = `${r.note} — caution: price is already ${vol.extension.toFixed(1)}x ATR from EMA21, low-probability chase`;
+    }
+  });
+}
 
 // Primary timeframe used as the "current price" reference for each setup's entry point
 const SETUP_PRIMARY_TF = {
@@ -1122,147 +1195,117 @@ function evaluateAllSetups(){
   setupResults.cciZeroLine           = h1  ? detectCciZeroLine(h1)                  : {direction:'none', note:'Waiting for H1 data'};
   setupResults.londonBreakout        = m15 ? detectLondonBreakout(m15)              : {direction:'none', note:'Waiting for M15 data'};
 
+  applyVolatilityFilter();
+
   SETUPS_META.forEach(meta=>{
     const tf = SETUP_PRIMARY_TF[meta.id];
     const cached = seriesCache[tf];
     const r = setupResults[meta.id];
     if(r && cached && (r.direction==='buy' || r.direction==='sell')){
       r.levels = setupTradeLevels(r.direction, cached.series);
-      r.volatility = assessVolatility(r.direction, cached);
-      if(r.volatility && r.volatility.suppressed){
-        r.rawDirection = r.direction;
-        r.direction = 'watch';
-        r.note = `${r.note} — volatility filter: ${r.volatility.note}`;
-      }
     } else if(r){
       r.levels = null;
-      r.volatility = null;
     }
   });
 
-  // Sound + notification alert whenever an individual setup card newly flips to BUY or SELL
-  // (signals suppressed by the ATR filter above are never buy/sell here, so they neither
-  // alert nor get logged to the performance tracker).
+  // Sound + notification alert whenever an individual setup card newly flips to BUY or SELL,
+  // and log the signal into that setup's performance history for win-rate tracking.
   SETUPS_META.forEach(meta=>{
-    const dir = (setupResults[meta.id] || {}).direction;
+    const r = setupResults[meta.id] || {};
+    const dir = r.direction;
     const prev = prevSetupDirections[meta.id];
     if((dir==='buy' || dir==='sell') && dir !== prev){
       fireAlert(dir, `${meta.name}: ${dir.toUpperCase()}`);
-      logNewSignal(meta, dir, seriesCache[SETUP_PRIMARY_TF[meta.id]]);
+      if(r.levels) recordSignal(meta.id, dir, r.levels, SETUP_PRIMARY_TF[meta.id]);
     }
     prevSetupDirections[meta.id] = dir;
   });
+
+  updateSetupHistory();
 }
 
 /* ---------- Historical performance tracking per setup ---------- */
-// Every fresh BUY/SELL signal gets logged (entry price, entry bar index on its own timeframe,
-// projected target). On each refresh we check open trades against new bars; once the configured
-// lookahead has elapsed the trade is scored (favorable move %, and whether the target was
-// touched). This is what lets the console show a running win-rate/avg-move per setup instead of
-// treating all 20 rules as equally reliable.
-let perfLog = { trades: [] };
-async function savePerf(){ try{ await window.storage.set('xauusd-perf-log', JSON.stringify(perfLog), false); }catch(e){} }
+// Every fresh BUY/SELL signal is logged with its entry price and projected target. On each
+// refresh, open ("pending") signals are checked against the price action since entry: a win
+// is recorded the moment the target is touched; if PERF_HORIZON_BARS pass without that, the
+// signal is closed out as a win or loss based on whether price ever moved in its favor. This
+// turns the "every setup is equally reliable" assumption into a measured, per-setup win rate.
+const PERF_HORIZON_BARS = 20;
+const PERF_MIN_SAMPLE = 5;
+const PERF_WEAK_WINRATE = 40;
+let setupHistory = {}; // id -> [ {direction, tf, entryIndex, entryTime, entryPrice, targetPrice, status, exitPrice, exitTime, outcome, movePct} ]
 
-function logNewSignal(meta, dir, cached){
-  if(!cached) return;
-  const series = cached.series;
-  const idx = series.closes.length-1;
-  const r = setupResults[meta.id];
-  const tp = (r && r.levels) ? r.levels.tp : null;
-  perfLog.trades.push({
-    tid: Date.now()+'-'+meta.id+'-'+Math.random().toString(36).slice(2,7),
-    setupId: meta.id,
-    direction: dir,
-    tf: SETUP_PRIMARY_TF[meta.id],
-    entryPrice: series.closes[idx],
-    entryIndex: idx,
-    entryTime: series.times[idx],
-    targetPrice: tp,
-    status: 'open',
-    bestMovePct: 0,
-    finalMovePct: null,
-    hitTarget: false
+async function loadHistory(){
+  try{
+    const h = await window.storage.get('xauusd-setup-history', false);
+    if(h && h.value) setupHistory = JSON.parse(h.value);
+  }catch(e){}
+  SETUPS_META.forEach(m=>{ if(!Array.isArray(setupHistory[m.id])) setupHistory[m.id] = []; });
+}
+async function saveHistory(){ try{ await window.storage.set('xauusd-setup-history', JSON.stringify(setupHistory), false); }catch(e){} }
+
+function recordSignal(id, direction, levels, tf){
+  const cached = seriesCache[tf];
+  if(!cached || !levels) return;
+  if(!Array.isArray(setupHistory[id])) setupHistory[id] = [];
+  const entryIndex = cached.series.closes.length - 1;
+  setupHistory[id].push({
+    direction, tf,
+    entryIndex, entryTime: cached.series.times[entryIndex],
+    entryPrice: levels.entry, targetPrice: levels.tp,
+    status: 'pending'
   });
-  if(perfLog.trades.length > 500) perfLog.trades = perfLog.trades.slice(-500);
-  savePerf();
 }
 
-function updatePerfTracking(){
-  let changed = false;
-  const lookahead = (config.perfLookaheadBars!=null && !isNaN(config.perfLookaheadBars)) ? config.perfLookaheadBars : 20;
-  perfLog.trades.forEach(t=>{
-    if(t.status !== 'open') return;
-    const cached = seriesCache[t.tf];
-    if(!cached) return;
-    const series = cached.series;
-    const lastIdx = series.closes.length-1;
-    const barsElapsed = lastIdx - t.entryIndex;
-    if(barsElapsed <= 0) return;
-    const buy = t.direction==='buy';
-    let bestPrice = buy ? -Infinity : Infinity;
-    for(let i=t.entryIndex+1; i<=lastIdx; i++){
-      const h = series.highs[i], l = series.lows[i];
-      if(buy){ if(h>bestPrice) bestPrice=h; if(t.targetPrice!=null && h>=t.targetPrice) t.hitTarget=true; }
-      else { if(l<bestPrice) bestPrice=l; if(t.targetPrice!=null && l<=t.targetPrice) t.hitTarget=true; }
-    }
-    if(bestPrice!==Infinity && bestPrice!==-Infinity){
-      t.bestMovePct = buy ? (bestPrice-t.entryPrice)/t.entryPrice*100 : (t.entryPrice-bestPrice)/t.entryPrice*100;
-    }
-    if(barsElapsed >= lookahead){
-      const finalPrice = series.closes[lastIdx];
-      t.finalMovePct = buy ? (finalPrice-t.entryPrice)/t.entryPrice*100 : (t.entryPrice-finalPrice)/t.entryPrice*100;
-      t.status = 'closed';
-      changed = true;
-    }
-  });
-  if(changed) savePerf();
+function closeTrade(tr, exitPrice, exitTime, outcome){
+  tr.status = 'closed';
+  tr.exitPrice = exitPrice;
+  tr.exitTime = exitTime;
+  tr.outcome = outcome;
+  tr.movePct = tr.direction==='buy'
+    ? (exitPrice - tr.entryPrice) / tr.entryPrice * 100
+    : (tr.entryPrice - exitPrice) / tr.entryPrice * 100;
 }
 
-function computeSetupStats(setupId){
-  const closed = perfLog.trades.filter(t=>t.setupId===setupId && t.status==='closed');
-  const n = closed.length;
-  if(n===0) return {n:0, winRate:null, avgMove:null, wins:0};
-  const wins = closed.filter(t=> t.hitTarget || t.finalMovePct>0).length;
-  const winRate = wins/n*100;
-  const avgMove = closed.reduce((a,t)=>a+t.finalMovePct,0)/n;
-  return {n, winRate, avgMove, wins};
-}
-function isUnderperformer(setupId){
-  const stats = computeSetupStats(setupId);
-  const minSample = (config.underperformMinSample!=null && !isNaN(config.underperformMinSample)) ? config.underperformMinSample : 8;
-  const threshold = (config.underperformThreshold!=null && !isNaN(config.underperformThreshold)) ? config.underperformThreshold : 35;
-  return stats.n>=minSample && stats.winRate < threshold;
-}
-
-function renderPerfTable(){
-  const body = document.getElementById('perfTableBody');
-  if(!body) return;
-  body.innerHTML = '';
-  const minSample = (config.underperformMinSample!=null && !isNaN(config.underperformMinSample)) ? config.underperformMinSample : 8;
-  const threshold = (config.underperformThreshold!=null && !isNaN(config.underperformThreshold)) ? config.underperformThreshold : 35;
-  let totalLogged = 0;
+function updateSetupHistory(){
   SETUPS_META.forEach(meta=>{
-    const stats = computeSetupStats(meta.id);
-    totalLogged += stats.n;
-    const tr = document.createElement('tr');
-    let status = 'No signals yet', statusClass = 'dim';
-    if(stats.n>0){
-      if(stats.n < minSample){ status = `Building sample (${stats.n}/${minSample})`; statusClass='dim'; }
-      else if(stats.winRate < threshold){ status = 'Underperforming'; statusClass='win-bad'; }
-      else { status = 'Tracking well'; statusClass='win-good'; }
-    }
-    tr.innerHTML = `<td>${meta.name}</td><td class="dim">${SETUP_PRIMARY_TF[meta.id]}</td>
-      <td>${stats.n||0}</td>
-      <td class="${stats.n>0 ? (stats.winRate>=50?'win-good':'win-bad') : 'dim'}">${stats.n>0?fmt(stats.winRate,0)+'%':'—'}</td>
-      <td class="${stats.n>0 ? (stats.avgMove>=0?'win-good':'win-bad') : 'dim'}">${stats.n>0?(stats.avgMove>=0?'+':'')+fmt(stats.avgMove,2)+'%':'—'}</td>
-      <td class="${statusClass}">${status}</td>`;
-    body.appendChild(tr);
+    const trades = setupHistory[meta.id];
+    if(!trades || !trades.length) return;
+    trades.forEach(tr=>{
+      if(tr.status !== 'pending') return;
+      const cached = seriesCache[tr.tf];
+      if(!cached) return;
+      const series = cached.series;
+      const lastIdx = series.closes.length - 1;
+      const elapsedBars = lastIdx - tr.entryIndex;
+      if(elapsedBars <= 0) return;
+      const sinceHighs = series.highs.slice(tr.entryIndex+1, lastIdx+1);
+      const sinceLows  = series.lows.slice(tr.entryIndex+1, lastIdx+1);
+      if(tr.direction === 'buy'){
+        const best = sinceHighs.length ? Math.max(...sinceHighs) : -Infinity;
+        if(best >= tr.targetPrice){ closeTrade(tr, tr.targetPrice, series.times[lastIdx], 'win'); return; }
+      } else {
+        const best = sinceLows.length ? Math.min(...sinceLows) : Infinity;
+        if(best <= tr.targetPrice){ closeTrade(tr, tr.targetPrice, series.times[lastIdx], 'win'); return; }
+      }
+      if(elapsedBars >= PERF_HORIZON_BARS){
+        const exitPrice = series.closes[lastIdx];
+        const favorable = tr.direction==='buy' ? exitPrice > tr.entryPrice : exitPrice < tr.entryPrice;
+        closeTrade(tr, exitPrice, series.times[lastIdx], favorable ? 'win' : 'loss');
+      }
+    });
   });
-  const pill = document.getElementById('perfSamplePill');
-  if(pill){
-    const openCount = perfLog.trades.filter(t=>t.status==='open').length;
-    pill.textContent = `${totalLogged} signal${totalLogged===1?'':'s'} scored · ${openCount} open`;
-  }
+  saveHistory();
+}
+
+function setupStats(id){
+  const trades = (setupHistory[id] || []).filter(t=>t.status==='closed');
+  const n = trades.length;
+  if(n===0) return {n:0};
+  const wins = trades.filter(t=>t.outcome==='win').length;
+  const winRate = wins / n * 100;
+  const avgMove = trades.reduce((a,t)=>a+t.movePct, 0) / n;
+  return {n, wins, winRate, avgMove};
 }
 
 function renderSetupCards(){
@@ -1270,9 +1313,16 @@ function renderSetupCards(){
   grid.innerHTML = '';
   SETUPS_META.forEach(meta=>{
     const r = setupResults[meta.id] || {direction:'none', note: autoMode ? 'Evaluating…' : 'Add an API key to enable this setup'};
+    const stats = setupStats(meta.id);
+    const isWeak = stats.n >= PERF_MIN_SAMPLE && stats.winRate < PERF_WEAK_WINRATE;
     const card = document.createElement('div');
-    card.className = 'setup-card ' + (r.direction==='buy' ? 'buy' : r.direction==='sell' ? 'sell' : r.direction==='watch' ? 'watch' : '');
+    card.className = 'setup-card ' + (r.direction==='buy' ? 'buy' : r.direction==='sell' ? 'sell' : r.direction==='watch' ? 'watch' : '') + (isWeak ? ' weak' : '');
     const dirLabel = r.direction==='buy' ? 'BUY' : r.direction==='sell' ? 'SELL' : r.direction==='watch' ? 'WATCHING' : 'NO SIGNAL';
+
+    let badgeHtml = '';
+    if(r.suppressedByVol) badgeHtml += `<span class="vol-badge suppressed">VOL-SUPPRESSED</span>`;
+    if(r.chaseWarning) badgeHtml += `<span class="vol-badge chase">CHASE RISK</span>`;
+
     let tradeHtml = '';
     if((r.direction==='buy' || r.direction==='sell') && r.levels){
       const lv = r.levels;
@@ -1283,10 +1333,21 @@ function renderSetupCards(){
           <div class="row dim"><span>${lv.tpType}</span></div>
         </div>`;
     }
+
+    let perfHtml = '';
+    if(stats.n>0){
+      const cls = stats.n>=PERF_MIN_SAMPLE ? (stats.winRate>=55 ? 'good' : stats.winRate<PERF_WEAK_WINRATE ? 'bad' : '') : '';
+      perfHtml = `<div class="perf-track ${cls}">Track record: ${stats.wins}W-${stats.n-stats.wins}L (${stats.winRate.toFixed(0)}%) · avg ${stats.avgMove>=0?'+':''}${stats.avgMove.toFixed(2)}% · ${stats.n} signal${stats.n===1?'':'s'}</div>`;
+      if(isWeak) perfHtml += `<div class="perf-warn">⚠ Historically underperforming — treat new signals with caution</div>`;
+    } else {
+      perfHtml = `<div class="perf-track dim">Track record: no closed signals yet</div>`;
+    }
+
     card.innerHTML = `<h4>${meta.name}</h4><div class="tf">Timeframe: ${meta.tf}</div>
-      <span class="setup-dir ${r.direction==='none'?'none':r.direction}">${dirLabel}</span>
+      <span class="setup-dir ${r.direction==='none'?'none':r.direction}">${dirLabel}</span>${badgeHtml}
       ${tradeHtml}
-      <span class="snote">${r.note}</span>`;
+      <span class="snote">${r.note}</span>
+      ${perfHtml}`;
     grid.appendChild(card);
   });
 }
@@ -1609,6 +1670,13 @@ document.getElementById('saveSettings').addEventListener('click', async ()=>{
   }
 });
 document.getElementById('fetchNow').addEventListener('click', ()=>{ if(config.apiKey) runAutoCycle(); else setStatus('Add an API key first.', true); });
+document.getElementById('resetHistory').addEventListener('click', async ()=>{
+  if(!confirm('Clear all logged setup signals and win-rate history? This cannot be undone.')) return;
+  SETUPS_META.forEach(m=> setupHistory[m.id] = []);
+  await saveHistory();
+  renderSetupCards();
+  setStatus('Track record history cleared.', false);
+});
 document.getElementById('stopAuto').addEventListener('click', ()=>{
   autoMode = false;
   if(refreshTimer) clearInterval(refreshTimer);
@@ -1637,6 +1705,7 @@ function tickClock(){
   renderDots();
   renderChecklists();
   await loadAll();
+  await loadHistory();
   document.getElementById('apiKeyInput').value = config.apiKey || '';
   document.getElementById('symbolInput').value = config.symbol || 'XAU/USD';
   document.getElementById('refreshInput').value = config.refreshMinutes || 3;
@@ -1645,6 +1714,7 @@ function tickClock(){
   applyStateToDOM();
   recompute();
   evaluateAllSetups();
+  renderVolatilityPanel();
   renderSetupCards();
   updateMasterBanner();
   tickClock();
