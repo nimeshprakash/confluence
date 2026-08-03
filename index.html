@@ -208,7 +208,7 @@
     <div class="settings-grid">
       <div class="field">
         <label>Twelve Data API key</label>
-        <input type="password" id="apiKeyInput" placeholder="ca5b55b9b4704010a7b0983c6798513b">
+        <input type="password" id="apiKeyInput" placeholder="paste free API key">
       </div>
       <div class="field">
         <label>Symbol</label>
@@ -370,7 +370,7 @@ let state = { buy:{}, sell:{} };
 let notes = { buy:{}, sell:{} }; // itemKey -> note string
 // EDIT THIS LINE: paste your Twelve Data key between the quotes so it's baked into the file
 // and you never have to retype it. Get a free key at twelvedata.com.
-const EMBEDDED_API_KEY = 'PASTE_YOUR_TWELVE_DATA_KEY_HERE';
+const EMBEDDED_API_KEY = 'ca5b55b9b4704010a7b0983c6798513b';
 
 let config = { apiKey:EMBEDDED_API_KEY, symbol:'XAU/USD', refreshMinutes:3, dxySymbol:'DXY', yieldSymbol:'TNX', vixSymbol:'VIX', nextEventUTC:'', nextEventName:'' };
 function hasValidApiKey(){ return !!(config.apiKey && config.apiKey !== 'PASTE_YOUR_TWELVE_DATA_KEY_HERE'); }
